@@ -6,9 +6,9 @@ Board support package (BSP) for the
 [`ulmk_boards`](../) tree and is consumed by the ulmk kernel via
 `-DULMK_CHIP_DIR`.
 
-**Phase 0+1 (current):** PLL @ 200 MHz, BMHD, STM0 system timer, ASCLIN0
-userspace console (USB virtual COM).  **No kernel printk** — `ulmk_printk_char_out`
-is a no-op; use `board_console_puts()` from driver threads.
+**Phase 2+ (current):** GPIO LEDs, ADC/I2C/CAN/PWM board servers (client–server),
+`board_blinky` demo.  Console is ASCLIN0 userspace (USB VCOM).  **No kernel printk**
+— `ulmk_printk_char_out` is a no-op; use `board_console_puts()` from apps.
 
 This BSP does **not** ship a `root_thread`.  Your application (or an ulmk
 component such as `hello_world`) provides `ulmk_root_thread()` and calls
@@ -24,9 +24,11 @@ flowchart TB
     end
 
     subgraph bsp["tc275_lite BSP (userspace services)"]
-        BS["board_services_init()"]
-        CON["board_console — ASCLIN0 IPC server"]
-        TIM["board_timer — STM0 IPC server"]
+        BS["board_services_init / _full"]
+        CON["board_console — ASCLIN0 TX/RX"]
+        TIM["board_timer — STM0"]
+        GPIO["board_gpio / board_leds"]
+        PER["adc i2c can pwm"]
     end
 
     subgraph kern["ulmk kernel + arch/tricore"]
@@ -37,28 +39,35 @@ flowchart TB
     subgraph hw["TC275 Lite Kit"]
         USB["USB ↔ ASCLIN0 P14.0/P14.1"]
         STM["STM0 tick"]
+        LED["LED1/2 P00.5/6"]
         PLL["SCU PLL 200 MHz"]
     end
 
     RT --> BS
     BS --> CON
     BS --> TIM
-    COMP -->|"board_console_puts"| CON
+    BS --> GPIO
+    BS --> PER
+    COMP -->|"board_console_puts / leds"| CON
+    COMP --> GPIO
     COMP --> SYS
     CON --> IPC
     TIM --> IPC
+    GPIO --> IPC
     SYS --> IPC
     CON --> USB
     TIM --> STM
+    GPIO --> LED
     PLL -.->|"ulmk_board_init"| hw
 ```
 
 | Layer | Responsibility |
 |-------|----------------|
 | `board_init.c` | CPU0: iLLD WDT EndInit + PLL 20→200 MHz + flash WS |
-| `board_console.c` | Driver thread owns ASCLIN0 MMIO; apps use IPC |
-| `board_timer.c` | Driver thread owns STM0 + IRQ binding; `board_timer_sleep_us()` |
-| `board_printk_stub.c` | Kernel debug output disabled on silicon |
+| `board_console.c` | ASCLIN0 TX/RX IPC server; RAM log for HIL |
+| `board_timer.c` | STM0 + `board_timer_sleep_us()` |
+| `board_gpio.c` / `board_leds.c` | PORT GPIO server; LED1/2 active-low |
+| `board_adc/i2c/can/pwm.c` | Peripheral IPC servers (`init_full`) |
 | `deps/illd_tc2x/` | Infineon [iLLD TC2x V1.22.0](https://github.com/Infineon/illd_release_tc2x) (IFASLL) |
 
 **Single core:** SMP is not supported; bring-up targets **CPU0** only.
@@ -148,13 +157,28 @@ Full guide: [scripts/README-openocd.md](scripts/README-openocd.md).
 Open a serial terminal on the **USB COM port** (115200 8N1) to see
 `board_console_puts()` output from userspace — not kernel `ulmk_printk()`.
 
-## Roadmap (later phases)
+## Roadmap
 
-| Phase | Drivers |
-|-------|---------|
-| 2 | GPIO (LEDs, user button), ADC (potentiometer) |
-| 3 | CAN0 (TLE9251 transceiver on board) |
-| 4 | I2C (Shield2Go / Arduino headers) |
+| Phase | Status |
+|-------|--------|
+| 0–1 | PLL, BMHD, STM0, ASCLIN0 console — done |
+| 2 | GPIO (LEDs, button), ADC (pot) — done |
+| 3 | CAN0 (TLE9251) — done (bring-up loopback API) |
+| 4 | I2C + PWM — done (client–server APIs) |
+
+`board_services_init()` starts console + timer + gpio/leds (cert path).
+`board_services_init_full()` also starts ADC/I2C/CAN/PWM (blinky / demos).
+
+### Blinky + shell
+
+```bash
+python3 tools/dev.py build --board ../ulmk_boards/tc275_lite \
+  --no-components --component board_blinky
+bash ../ulmk_boards/tc275_lite/scripts/hil-board-blinky.sh \
+  ../build/ulipe-tricore-tc275_lite/ulmk
+```
+
+USB serial 115200 8N1: commands `help`, `status`, `led1 on|off`, `led2 on|off`.
 
 ## Hardware notes
 
@@ -172,9 +196,10 @@ Open a serial terminal on the **USB COM port** (115200 8N1) to see
 | `silicon_unit` | `scripts/hil-silicon-unit.sh` |
 | `silicon_stress` | `scripts/hil-silicon-stress.sh` |
 | `silicon_wcet` | `scripts/hil-silicon-wcet.sh` |
+| `board_blinky` | `scripts/hil-board-blinky.sh` |
 
-Order: baseline → e2e → unit → stress → wcet.  Expect `SILICON_*: PASS` in the RAM log
-(with `> section` progress markers before the final verdict).
+Order: baseline → e2e → unit → stress → wcet.  Blinky is the BSP demo (not a cert gate).
+Expect `SILICON_*: PASS` / `BOARD_BLINKY: PASS` in the RAM log.
 
 ```bash
 python3 tools/dev.py build --board ../ulmk_boards/tc275_lite \

@@ -26,6 +26,9 @@ if ! pgrep -f tas_server >/dev/null 2>&1; then
 	exit 1
 fi
 
+# Always flash so symbol breakpoints match the image under test.
+"${ROOT}/scripts/flash.sh" "$ELF" >/dev/null
+
 OCD="${ULMK_AURIX_PREFIX}/bin/openocd"
 OCD_SEARCH=(-s "${ULMK_AURIX_PREFIX}/share/openocd/scripts" -s "${ROOT}/openocd")
 

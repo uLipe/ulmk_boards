@@ -10,7 +10,8 @@ echo "=== phase 1: root_thread (JTAG) ==="
 
 echo ""
 echo "=== phase 2: console output (RAM log via JTAG) ==="
-"${ROOT}/scripts/hil-console-check.sh" "$ELF"
+HIL_CONSOLE_EXPECT="${HIL_CONSOLE_EXPECT:-SILICON_BASELINE: PASS}" \
+	"${ROOT}/scripts/hil-console-check.sh" "$ELF"
 
 echo ""
 echo "PASS: silicon baseline (root_thread + console)"

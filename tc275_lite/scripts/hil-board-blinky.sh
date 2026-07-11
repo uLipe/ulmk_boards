@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# HIL console check — flash, run hello puts, dump RAM console log via JTAG.
+# HIL board_blinky — flash blinky, expect BOARD_BLINKY: PASS in RAM log.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -9,7 +9,7 @@ source "$(dirname "$0")/aurix-env.sh"
 source_aurix_env || exit 1
 
 ELF="${1:-/home/ulipe/fun/build/ulipe-tricore-tc275_lite/ulmk}"
-EXPECT="${HIL_CONSOLE_EXPECT:-hello from userspace}"
+EXPECT="${HIL_BLINKY_EXPECT:-BOARD_BLINKY: PASS}"
 GDB_PORT="${ULMK_OCD_GDB_PORT:-3333}"
 
 if [[ ! -f "$ELF" ]]; then
@@ -30,33 +30,28 @@ OCD="${ULMK_AURIX_PREFIX}/bin/openocd"
 pkill -9 -f "${OCD}" 2>/dev/null || true
 sleep 1
 "$OCD" -s "${ULMK_AURIX_PREFIX}/share/openocd/scripts" -s "${ROOT}/openocd" \
-	-f "${ROOT}/openocd/tc275_lite_hil.cfg" >/tmp/ulmk-ocd-console.log 2>&1 &
+	-f "${ROOT}/openocd/tc275_lite_hil.cfg" >/tmp/ulmk-ocd-blinky.log 2>&1 &
 sleep 3
 
-GDB_OUT=/tmp/ulmk-gdb-console.log
+GDB_OUT=/tmp/ulmk-gdb-blinky.log
 cleanup() { pkill -9 -f "${OCD}" 2>/dev/null || true; }
 trap cleanup EXIT
 
 docker run --rm --network host -v "$(dirname "$ELF"):/elf" ulipe-microkernel:dev \
-	timeout 60 tricore-elf-gdb -batch "/elf/$(basename "$ELF")" \
-	-ex "set remotetimeout 30" \
+	timeout 90 tricore-elf-gdb -batch "/elf/$(basename "$ELF")" \
+	-ex "set remotetimeout 60" \
 	-ex "target extended-remote :${GDB_PORT}" \
 	-ex "monitor reset halt" \
 	-ex "break ulmk_kern_trap_panic" \
-	-ex "break hello_entry" \
+	-ex "break board_blinky_done" \
 	-ex "continue" \
-	-ex "delete" \
-	-ex "break ulmk_kern_trap_panic" \
-	-ex "break ulmk_thread_exit" \
-	-ex "continue" \
-	-ex "info register pc" \
 	-ex "x/wx &g_ulmk_board_hil_scratch" \
 	-ex "x/wx &g_ulmk_console_log_len" \
-	-ex "x/256cb &g_ulmk_console_log" \
+	-ex "x/2048cb &g_ulmk_console_log" \
 	-ex "bt 4" >"$GDB_OUT" 2>&1 || true
 
 echo "--- gdb ---"
-/usr/bin/tail -50 "$GDB_OUT"
+/usr/bin/tail -30 "$GDB_OUT"
 echo "--- end gdb ---"
 
 DECODED="$(python3 - "$GDB_OUT" <<'PY'
@@ -83,7 +78,7 @@ printf '%s\n' "$DECODED"
 echo "--- end decoded ---"
 
 if printf '%s' "$DECODED" | grep -qF "$EXPECT"; then
-	echo "PASS: RAM console log contains \"${EXPECT}\""
+	echo "PASS: ${EXPECT}"
 	exit 0
 fi
 
@@ -92,5 +87,5 @@ if grep -qE "ulmk_kern_trap_panic" "$GDB_OUT"; then
 	exit 1
 fi
 
-echo "FAIL: \"${EXPECT}\" not in RAM console log" >&2
+echo "FAIL: \"${EXPECT}\" not found" >&2
 exit 1

@@ -28,6 +28,12 @@ set(ULMK_BOARD_SOURCES
     board_services.c
     board_console.c
     board_timer.c
+    board_gpio.c
+    board_leds.c
+    board_adc.c
+    board_i2c.c
+    board_can.c
+    board_pwm.c
     drivers/asclin/asclin_uart.c
     drivers/port/port14_asclin0.c
     ${ULMK_BOARD_ILLD_SOURCES}

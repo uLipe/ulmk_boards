@@ -106,3 +106,11 @@ int asclin_uart_rx_byte(void *base, uint8_t *out)
 	}
 	return -1;
 }
+
+int asclin_uart_rx_byte_nb(void *base, uint8_t *out)
+{
+	if (rx_fill(base) == 0u)
+		return -1;
+	*out = (uint8_t)(ASCLIN_REG(base, ASCLIN_RXDATA_OFF) & 0xFFu);
+	return 0;
+}

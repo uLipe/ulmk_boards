@@ -33,6 +33,21 @@
 #define ULMK_BOARD_ASCLIN0_BASE		0xF0000600u
 #define ULMK_BOARD_CONSOLE_BAUD		115200u
 
+/* ── Lite Kit peripherals (thin userspace drivers) ─────────────────────── */
+
+#define ULMK_BOARD_VADC_BASE		0xF0020000u
+#define ULMK_BOARD_I2C0_BASE		0xF00C0000u
+#define ULMK_BOARD_CAN_BASE		0xF0018000u
+#define ULMK_BOARD_GTM_BASE		0xF0100000u
+
+/* LED1 P00.5, LED2 P00.6 (active-low); Button1 P00.7; pot AN0. */
+#define ULMK_BOARD_LED1_PORT		0u
+#define ULMK_BOARD_LED1_PIN		5u
+#define ULMK_BOARD_LED2_PORT		0u
+#define ULMK_BOARD_LED2_PIN		6u
+#define ULMK_BOARD_BUTTON_PORT		0u
+#define ULMK_BOARD_BUTTON_PIN		7u
+
 /* ── Memory map (MPU coarse regions; must match memory.ld ORIGIN) ──────── */
 
 #define ULMK_BOARD_FLASH_BASE		0x80000000u

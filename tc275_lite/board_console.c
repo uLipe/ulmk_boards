@@ -16,6 +16,7 @@
 void ulmk_board_hil_mark(uint32_t n);
 
 #define CONSOLE_MSG_PUTC	1u
+#define CONSOLE_MSG_GETC	2u
 #define ASCLIN_MAP_SIZE		0x100u
 #define CONSOLE_LOG_SIZE	2048u
 
@@ -54,12 +55,30 @@ void board_console_puts(const char *s)
 		board_console_putc(*s++);
 }
 
+int board_console_getc(char *out)
+{
+	ulmk_msg_t msg;
+	int rc;
+
+	msg.label = CONSOLE_MSG_GETC;
+	msg.words[0] = 0u;
+	if (ulmk_ep_call(g_ep, &msg) != ULMK_OK)
+		return ULMK_EINVAL;
+	rc = (int)(int32_t)msg.words[0];
+	if (rc == ULMK_OK && out)
+		*out = (char)(uint8_t)msg.words[1];
+	return rc;
+}
+
 static void console_server(void *arg)
 {
 	void *base;
 	ulmk_msg_t msg;
+	ulmk_msg_t reply;
 	ulmk_tid_t sender;
 	char       c;
+	uint8_t    b;
+	int        rc;
 
 	(void)arg;
 
@@ -79,12 +98,24 @@ static void console_server(void *arg)
 
 	for (;;) {
 		ulmk_ep_recv(g_ep, &msg, &sender);
+		reply.label = 0u;
+		reply.words[0] = 0u;
+		reply.words[1] = 0u;
 		if (msg.label == CONSOLE_MSG_PUTC) {
 			c = (char)(uint8_t)msg.words[0];
 			console_log_putc(c);
 			(void)asclin_uart_tx_byte(base, (uint8_t)c);
+		} else if (msg.label == CONSOLE_MSG_GETC) {
+			rc = asclin_uart_rx_byte_nb(base, &b);
+			if (rc == 0) {
+				reply.words[0] = (uint32_t)ULMK_OK;
+				reply.words[1] = b;
+			} else {
+				reply.words[0] =
+					(uint32_t)(int32_t)ULMK_ETIMEOUT;
+			}
 		}
-		ulmk_ep_reply(sender, &(ulmk_msg_t){0});
+		ulmk_ep_reply(sender, &reply);
 	}
 }
 
