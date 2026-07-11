@@ -169,12 +169,17 @@ Open a serial terminal on the **USB COM port** (115200 8N1) to see
 |-----------|--------|
 | `silicon_baseline` | `scripts/hil-baseline-check.sh` |
 | `silicon_e2e` | `scripts/hil-silicon-e2e.sh` |
+| `silicon_unit` | `scripts/hil-silicon-unit.sh` |
 | `silicon_stress` | `scripts/hil-silicon-stress.sh` |
+| `silicon_wcet` | `scripts/hil-silicon-wcet.sh` |
+
+Order: baseline → e2e → unit → stress → wcet.  Expect `SILICON_*: PASS` in the RAM log
+(with `> section` progress markers before the final verdict).
 
 ```bash
 python3 tools/dev.py build --board ../ulmk_boards/tc275_lite \
-  --no-components --component silicon_stress
-bash ../ulmk_boards/tc275_lite/scripts/hil-silicon-stress.sh \
+  --no-components --component silicon_unit
+bash ../ulmk_boards/tc275_lite/scripts/hil-silicon-unit.sh \
   ../build/ulipe-tricore-tc275_lite/ulmk
 ```
 
