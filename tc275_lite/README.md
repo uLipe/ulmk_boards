@@ -1,0 +1,170 @@
+# AURIX TC275 Lite Kit — ulmk board support
+
+Board support package (BSP) for the
+[Infineon AURIX TC275 Lite Kit](https://www.infineon.com/KIT_AURIX_TC275_LITE)
+(`KIT_AURIX_TC275_LITE`, SAK-TC275TP-64F200W).  Lives in the sibling
+[`ulmk_boards`](../) tree and is consumed by the ulmk kernel via
+`-DULMK_CHIP_DIR`.
+
+**Phase 0+1 (current):** PLL @ 200 MHz, BMHD, STM0 system timer, ASCLIN0
+userspace console (USB virtual COM).  **No kernel printk** — `ulmk_printk_char_out`
+is a no-op; use `board_console_puts()` from driver threads.
+
+This BSP does **not** ship a `root_thread`.  Your application (or an ulmk
+component such as `hello_world`) provides `ulmk_root_thread()` and calls
+`board_services_init(info)` at startup.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph app["Your application (userspace)"]
+        RT["ulmk_root_thread()"]
+        COMP["components / drivers"]
+    end
+
+    subgraph bsp["tc275_lite BSP (userspace services)"]
+        BS["board_services_init()"]
+        CON["board_console — ASCLIN0 IPC server"]
+        TIM["board_timer — STM0 IPC server"]
+    end
+
+    subgraph kern["ulmk kernel + arch/tricore"]
+        IPC["IPC / scheduler / MPU"]
+        SYS["syscall gateway"]
+    end
+
+    subgraph hw["TC275 Lite Kit"]
+        USB["USB ↔ ASCLIN0 P14.0/P14.1"]
+        STM["STM0 tick"]
+        PLL["SCU PLL 200 MHz"]
+    end
+
+    RT --> BS
+    BS --> CON
+    BS --> TIM
+    COMP -->|"board_console_puts"| CON
+    COMP --> SYS
+    CON --> IPC
+    TIM --> IPC
+    SYS --> IPC
+    CON --> USB
+    TIM --> STM
+    PLL -.->|"ulmk_board_init"| hw
+```
+
+| Layer | Responsibility |
+|-------|----------------|
+| `board_init.c` | CPU0: iLLD WDT EndInit + PLL 20→200 MHz + flash WS |
+| `board_console.c` | Driver thread owns ASCLIN0 MMIO; apps use IPC |
+| `board_timer.c` | Driver thread owns STM0 + IRQ binding; `board_timer_sleep_us()` |
+| `board_printk_stub.c` | Kernel debug output disabled on silicon |
+| `deps/illd_tc2x/` | Infineon [iLLD TC2x V1.22.0](https://github.com/Infineon/illd_release_tc2x) (IFASLL) |
+
+**Single core:** SMP is not supported; bring-up targets **CPU0** only.
+
+**TriCore ISA:** TC275 CPU0 is **TC1.6E (1.6.1)** with **112 KB** DSPR
+(`0x70000000`–`0x7001BFFF`).  Do not use the 120 KB / 240 KB figures from
+CPU1/CPU2 or from TC3xx (1.6.2) boards — past `0x7001C000` is reserved and
+raises Class 4.  QEMU `qemu_tc3xx` remains the 1.6.2 CI target; this BSP is
+the silicon 1.6.1 path.
+
+### Infineon iLLD (`deps/`)
+
+```bash
+cd deps
+git clone --depth 1 --branch V1.22.0 \
+  https://github.com/Infineon/illd_release_tc2x.git illd_tc2x
+cd illd_tc2x && git sparse-checkout init --cone
+git sparse-checkout set src/TC27D \
+  examples/BaseFramework_TC27D/0_Src/AppSw/CpuGeneric/Config \
+  IFASLL202501.pdf README.md
+```
+
+`board_init` uses **header-only** iLLD WDT inlines (`IfxScuWdt_*Inline`) and
+SFR / `IfxScu_cfg.h` macros.  `IfxScuCcu.c` is **not** linked: it has `.data`
+and cannot run before `.data` relocation.  License: IFASLL (see
+`deps/illd_tc2x/IFASLL202501.pdf`); board MIT sources stay separate.
+
+**Userspace drivers later:** iLLD `MODULE_*` bases are physical.  Console /
+GPIO threads must `ulmk_mem_map` the MMIO window (or wrap drivers with a
+mapped base) before calling iLLD — not required for `board_init`.
+
+## Directory layout
+
+```
+tc275_lite/
+  board.cmake / board_config.h / memory.ld / bmhd.*
+  board_init.c / board_services.*
+  board_console.* / board_timer.*
+  deps/                    Ifx_Cfg.h, illd.cmake, illd_tc2x/ (IFASLL)
+  drivers/asclin/          ASCLIN UART (polled 8N1)
+  drivers/port/            P14 pin mux for ASCLIN0
+  openocd/                 TAS configs + aurix-openocd patch series (upstream PR)
+  scripts/                 flash.sh, hil-boot-check.sh, hil-step-test.sh, …
+```
+
+## Build (ulmk dev container)
+
+From the **ulmk** repository:
+
+```bash
+python3 tools/dev.py
+
+# inside container — enable a component that provides ulmk_root_thread()
+python3 tools/dev.py components enable hello_world ping_pong
+
+python3 tools/dev.py build --board /workspace/../ulmk_boards/tc275_lite \
+    --component hello_world --component ping_pong
+```
+
+On the host (paths relative to your checkout):
+
+```bash
+python3 tools/dev.py build \
+    --board ../ulmk_boards/tc275_lite \
+    --component hello_world --component ping_pong
+```
+
+Artifact: `build/ulipe-tricore-tc275_lite/ulmk` (exact subdir name follows the
+board directory basename).
+
+## Flash and debug
+
+**Recommended:** use the host install script (handles FTDI, OpenOCD, toolchain):
+
+```bash
+cd ulmk_boards/tc275_lite/scripts
+./install-host-tools.sh \
+  --ftdi-archive ~/Downloads/libftd2xx-linux-x86_64-*.tgz \
+  --tas-archive ~/Downloads/DAS_8.3.0_linux_x64.deb
+source ~/.local/aurix/env.sh
+./start-tas.sh
+./flash.sh /path/to/ulmk.elf
+```
+
+Full guide: [scripts/README-openocd.md](scripts/README-openocd.md).
+
+Open a serial terminal on the **USB COM port** (115200 8N1) to see
+`board_console_puts()` output from userspace — not kernel `ulmk_printk()`.
+
+## Roadmap (later phases)
+
+| Phase | Drivers |
+|-------|---------|
+| 2 | GPIO (LEDs, user button), ADC (potentiometer) |
+| 3 | CAN0 (TLE9251 transceiver on board) |
+| 4 | I2C (Shield2Go / Arduino headers) |
+
+## Hardware notes
+
+- **Crystal:** 20 MHz → **200 MHz** CPU (`ULMK_BOARD_FCPU_HZ`).
+- **Console:** ASCLIN0 default on **P14.0** (TX) / **P14.1** (RX) per kit manual.
+- **Timer:** STM0 SR0 @ SRC `0xF0038490`, SRPN 2 (console server uses SRPN 1
+  reserved for future use; timer uses 2).
+- **BMHD:** `.bmhd` in flash NC alias; CRC must match `_start` — see `bmhd.c`.
+
+## References
+
+- [TC275 Lite Kit user manual](https://www.infineon.com/assets/row/public/documents/10/44/infineon-aurix-tc275-lite-kit-usermanual-en.pdf)
+- ulmk: `docs/application_development_guide.md`, `docs/linker_spec.md` §9

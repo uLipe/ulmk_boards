@@ -1,0 +1,5 @@
+# Apply in order against go2sh/aurix-openocd (tested @ 4fbdce8).
+# Regenerate: scripts/regen-openocd-patches.sh
+0001-flash-nor-tc27x-tc2xx-support.patch
+0002-target-aurix-tc2xx-debug-step.patch
+0003-jtag-tas-client-sole-target.patch

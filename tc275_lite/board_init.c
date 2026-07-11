@@ -1,0 +1,236 @@
+/* SPDX-License-Identifier: MIT */
+/*
+ * tc275_lite/board_init.c — early hardware bring-up (CPU0 only).
+ *
+ * Runs from ulmk_kern_start() before .data copy: no globals, no kernel API.
+ *
+ * Watchdog EndInit uses Infineon iLLD inlines (IfxScuWdt_*Inline) from
+ * deps/illd_tc2x (TC27D, V1.22.0).  PLL / flash follow the same register
+ * sequence as IfxScuCcu_init() for 20 MHz → 200 MHz, but without linking
+ * IfxScuCcu.c (that file has .data and cannot run pre-relocation).
+ */
+
+#include <stdint.h>
+
+#include "Ifx_Cfg.h"
+#include "Scu/Std/IfxScuWdt.h"
+#include "IfxAsclin_reg.h"
+#include "IfxFlash_reg.h"
+#include "_Impl/IfxScu_cfg.h"
+
+#ifndef IFXSCUCCU_OSC_STABLECHK_TIME
+#define IFXSCUCCU_OSC_STABLECHK_TIME	640
+#endif
+
+/* Busy-wait calibrated for ~100 MHz backup / early PLL (EVR / fback). */
+static void busy_wait_us(uint32_t us)
+{
+	volatile uint32_t n = us * 25u;
+
+	while (n-- != 0u) {
+	}
+}
+
+static void wdt_disable_cpu0(void)
+{
+	uint16_t pw;
+
+	pw = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[0]);
+	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw);
+	MODULE_SCU.WDTCPU[0].CON1.B.DR = 1u;
+	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw);
+}
+
+static void wdt_disable_safety(void)
+{
+	uint16_t pw;
+
+	pw = IfxScuWdt_getSafetyWatchdogPasswordInline();
+	IfxScuWdt_clearSafetyEndinitInline(pw);
+	MODULE_SCU.WDTS.CON1.B.DR = 1u;
+	IfxScuWdt_setSafetyEndinitInline(pw);
+}
+
+static int osc_wait_stable(void)
+{
+	int32_t timeout = IFXSCUCCU_OSC_STABLECHK_TIME;
+
+	SCU_OSCCON.B.MODE = 0u;
+	SCU_OSCCON.B.OSCVAL = (uint32_t)(IFX_CFG_SCU_XTAL_FREQUENCY / 2500000u) - 1u;
+	SCU_OSCCON.B.OSCRES = 1u;
+
+	while ((SCU_OSCCON.B.PLLLV == 0u) || (SCU_OSCCON.B.PLLHV == 0u)) {
+		timeout--;
+		if (timeout <= 0) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+/*
+ * 20 MHz XTAL → 200 MHz fPLL (iLLD IFXSCU_CFG_*_20MHZ_200MHZ):
+ *   initial: P=1, N=59, K2=5  → ~66.7 MHz then ramp K2: 4 → 3 → 2
+ */
+static int pll_init_20mhz_200mhz(void)
+{
+	uint16_t pw_cpu;
+	uint16_t pw_sfty;
+	uint8_t smu_trap;
+	Ifx_SCU_CCUCON0 ccucon0;
+	Ifx_SCU_CCUCON1 ccucon1;
+	Ifx_FLASH_FCON fcon;
+
+	pw_cpu = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[0]);
+	pw_sfty = IfxScuWdt_getSafetyWatchdogPasswordInline();
+
+	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
+	smu_trap = SCU_TRAPDIS.B.SMUT;
+	SCU_TRAPDIS.B.SMUT = 1u;
+	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
+
+	IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
+
+	while (SCU_CCUCON0.B.LCK != 0u) {
+	}
+	SCU_CCUCON0.B.CLKSEL = 0u;
+	SCU_CCUCON0.B.UP = 1u;
+
+	SCU_PLLCON0.B.SETFINDIS = 1u;
+
+	while (SCU_CCUCON1.B.LCK != 0u) {
+	}
+	SCU_CCUCON1.B.INSEL = 1u;
+	SCU_CCUCON1.B.UP = 1u;
+
+	if (osc_wait_stable() != 0) {
+		IfxScuWdt_setSafetyEndinitInline(pw_sfty);
+		return -1;
+	}
+
+	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
+
+	IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
+
+	while (SCU_PLLSTAT.B.K2RDY == 0u) {
+	}
+	SCU_PLLCON1.B.K2DIV = 5u; /* (6 - 1) initial */
+
+	SCU_PLLCON0.B.PDIV = 1u;  /* (2 - 1) */
+	SCU_PLLCON0.B.NDIV = 59u; /* (60 - 1) */
+	SCU_PLLCON0.B.OSCDISCDIS = 1u;
+	SCU_PLLCON0.B.PLLPWD = 0u;
+	SCU_PLLCON0.B.CLRFINDIS = 1u;
+	SCU_PLLCON0.B.PLLPWD = 1u;
+	SCU_PLLCON0.B.RESLD = 1u;
+
+	busy_wait_us(50u);
+
+	while (SCU_PLLSTAT.B.VCOLOCK == 0u) {
+	}
+
+	SCU_PLLCON0.B.VCOBYP = 0u;
+
+	while (SCU_CCUCON0.B.LCK != 0u) {
+	}
+	SCU_CCUCON0.B.CLKSEL = 1u;
+
+	busy_wait_us(200u);
+
+	ccucon0.U = SCU_CCUCON0.U & ~IFXSCU_CFG_CCUCON0_MASK;
+	ccucon0.U |= (IFXSCU_CFG_CCUCON0_MASK & IFXSCU_CFG_CCUCON0);
+	ccucon0.B.CLKSEL = 1u;
+	ccucon0.B.UP = 1u;
+	SCU_CCUCON0 = ccucon0;
+
+	while (SCU_CCUCON1.B.LCK != 0u) {
+	}
+	ccucon1.U = SCU_CCUCON1.U & ~IFXSCU_CFG_CCUCON1_MASK;
+	ccucon1.U |= (IFXSCU_CFG_CCUCON1_MASK & IFXSCU_CFG_CCUCON1);
+	ccucon1.B.INSEL = 1u;
+	ccucon1.B.UP = 1u;
+	SCU_CCUCON1 = ccucon1;
+
+	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
+
+	/* Flash wait states for 200 MHz (CPU EndInit). */
+	fcon.U = FLASH0_FCON.U & ~IFXSCU_CFG_FLASH_WAITSTATE_MSK;
+	fcon.U |= (IFXSCU_CFG_FLASH_WAITSTATE_MSK & IFXSCU_CFG_FLASH_WAITSTATE_VAL);
+	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
+	FLASH0_FCON = fcon;
+	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
+
+	/* K2 ramp: 120 → 150 → 200 MHz (iLLD steps use k2 = N-1). */
+	IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
+	while (SCU_PLLSTAT.B.K2RDY == 0u) {
+	}
+	SCU_PLLCON1.B.K2DIV = 4u;
+	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
+	busy_wait_us(100u);
+
+	IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
+	while (SCU_PLLSTAT.B.K2RDY == 0u) {
+	}
+	SCU_PLLCON1.B.K2DIV = 3u;
+	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
+	busy_wait_us(100u);
+
+	IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
+	while (SCU_PLLSTAT.B.K2RDY == 0u) {
+	}
+	SCU_PLLCON1.B.K2DIV = 2u;
+	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
+	busy_wait_us(100u);
+
+	IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
+	SCU_PLLCON0.B.OSCDISCDIS = 0u;
+	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
+
+	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
+	SCU_TRAPCLR.B.SMUT = 1u;
+	SCU_TRAPDIS.B.SMUT = smu_trap;
+	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
+
+	return 0;
+}
+
+static void asclin0_enable_module_clock(void)
+{
+	uint16_t pw_cpu;
+	uint16_t pw_sfty;
+
+	/*
+	 * ASCLIN CLC.DISR needs EndInit (CPU + safety on TC27x).  Userspace
+	 * driver threads must not touch CLC — only board_init may enable here.
+	 */
+	pw_cpu  = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[0]);
+	pw_sfty = IfxScuWdt_getSafetyWatchdogPasswordInline();
+	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
+	IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
+	MODULE_ASCLIN0.CLC.B.DISR = 0u;
+	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
+	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
+
+	{
+		volatile uint32_t spin = 0u;
+
+		while (MODULE_ASCLIN0.CLC.B.DISS) {
+			spin++;
+			if (spin > 1000000u)
+				break;
+		}
+	}
+}
+
+void ulmk_board_init(void)
+{
+	/*
+	 * Disable WDTs first so PLL lock / ramp waits cannot reset the core.
+	 * EndInit still works with DR=1 (same as iLLD disable*Watchdog).
+	 */
+	wdt_disable_cpu0();
+	wdt_disable_safety();
+
+	(void)pll_init_20mhz_200mhz();
+	asclin0_enable_module_clock();
+}

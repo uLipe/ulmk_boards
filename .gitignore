@@ -1,0 +1,16 @@
+**/build/
+*.elf
+*.hex
+*.bin
+*.map
+*.o
+*.a
+*~
+
+# HIL / flash scratch artefacts
+**/*.log
+**/*.out
+**/scripts/*.txt
+
+# Infineon iLLD (clone separately — see tc275_lite/README.md)
+**/deps/illd_tc2x/

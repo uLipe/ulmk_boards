@@ -1,0 +1,3 @@
+# Infineon iLLD (IFASLL) — not part of the MIT board sources.
+# Clone: https://github.com/Infineon/illd_release_tc2x (tag V1.22.0)
+/illd_tc2x/

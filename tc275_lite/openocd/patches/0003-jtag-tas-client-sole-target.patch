@@ -1,0 +1,17 @@
+diff --git a/src/jtag/drivers/tas_client/tas_client.c b/src/jtag/drivers/tas_client/tas_client.c
+index 55294d6..e98fc6e 100644
+--- a/src/jtag/drivers/tas_client/tas_client.c
++++ b/src/jtag/drivers/tas_client/tas_client.c
+@@ -342,6 +342,12 @@ static int tas_client_op_connect(struct aurix_ocds *ocds) {
+     }
+   }
+ 
++  if (target == NULL && client_state.target_num == 1) {
++    target = &client_state.targets[0];
++    LOG_WARNING("OCDS %s: using sole TAS target %s (device_type 0x%08x)",
++                ocds->name, target->identifier, target->device_type);
++  }
++
+ out:
+   if (target == NULL) {
+     LOG_ERROR("No matching target for OCDS %s found", ocds->name);

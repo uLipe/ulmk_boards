@@ -1,0 +1,13 @@
+/*
+ * tc275_lite/bmhd.ld.in — BMHD at flash origin, _start immediately after (LMA 0x80000030).
+ *
+ * STAD in bmhd.c must match the cached alias of the _start LMA (0xA0000030).
+ */
+.bmhd : {
+	KEEP(*(.bmhd))
+} > KERNEL_FLASH_NC
+
+.startup 0xA0000030 : AT(0x80000030) {
+	KEEP(*(.text._start))
+	_ulmk_kernel_exec_start = .;
+} > KERNEL_FLASH
