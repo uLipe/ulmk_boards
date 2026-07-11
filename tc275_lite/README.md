@@ -158,11 +158,28 @@ Open a serial terminal on the **USB COM port** (115200 8N1) to see
 
 ## Hardware notes
 
-- **Crystal:** 20 MHz → **200 MHz** CPU (`ULMK_BOARD_FCPU_HZ`).
+- **Crystal:** 20 MHz → **200 MHz** CPU (`ULMK_BOARD_FCPU_HZ`); STM @ **100 MHz** (`ULMK_BOARD_FSTM_HZ`).
 - **Console:** ASCLIN0 default on **P14.0** (TX) / **P14.1** (RX) per kit manual.
-- **Timer:** STM0 SR0 @ SRC `0xF0038490`, SRPN 2 (console server uses SRPN 1
-  reserved for future use; timer uses 2).
+- **Timer:** STM0 base `0xF0000000` (TC27D), SR0 @ SRC `0xF0038490`, SRE bit 10, SRPN 2.
 - **BMHD:** `.bmhd` in flash NC alias; CRC must match `_start` — see `bmhd.c`.
+
+## Cert set (with sibling ulmk_apps)
+
+| Component | Script |
+|-----------|--------|
+| `silicon_baseline` | `scripts/hil-baseline-check.sh` |
+| `silicon_e2e` | `scripts/hil-silicon-e2e.sh` |
+| `silicon_stress` | `scripts/hil-silicon-stress.sh` |
+
+```bash
+python3 tools/dev.py build --board ../ulmk_boards/tc275_lite \
+  --no-components --component silicon_stress
+bash ../ulmk_boards/tc275_lite/scripts/hil-silicon-stress.sh \
+  ../build/ulipe-tricore-tc275_lite/ulmk
+```
+
+Oracle: RAM console log via JTAG (`g_ulmk_console_log`).  `/dev/ttyUSB0` on the
+Lite Kit DAS is not a CDC VCOM for ASCLIN.
 
 ## References
 

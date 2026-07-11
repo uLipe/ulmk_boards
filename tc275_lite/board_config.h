@@ -18,12 +18,15 @@
 /* ── IRQ: AURIX Service Request (SRC) block — TC27x layout ───────────── */
 
 #define ULMK_BOARD_SRC_BASE		0xF0038000u
-#define ULMK_BOARD_SRC_SRE_BIT		12u
+/* TC27D SRC.SRCR.SRE is bit 10 (TOS starts at bit 11). */
+#define ULMK_BOARD_SRC_SRE_BIT		10u
 #define ULMK_BOARD_SRC_STM0_SR0		0xF0038490u
 
-/* ── Timer peripheral (STM0, Core 0) ───────────────────────────────────── */
+/* ── Timer peripheral (STM0, Core 0) — IfxStm_reg.h MODULE_STM0 ─────────── */
 
-#define ULMK_BOARD_STM0_BASE		0xF0001000u
+#define ULMK_BOARD_STM0_BASE		0xF0000000u
+/* fSTM follows fSPB; with PLL@200 MHz and SPB div=2 → 100 MHz. */
+#define ULMK_BOARD_FSTM_HZ		100000000u
 
 /* ── ASCLIN0 (USB virtual COM on Lite Kit) ─────────────────────────────── */
 

@@ -15,6 +15,7 @@
 #include "Ifx_Cfg.h"
 #include "Scu/Std/IfxScuWdt.h"
 #include "IfxAsclin_reg.h"
+#include "IfxStm_reg.h"
 #include "IfxFlash_reg.h"
 #include "_Impl/IfxScu_cfg.h"
 
@@ -194,6 +195,18 @@ static int pll_init_20mhz_200mhz(void)
 	return 0;
 }
 
+static void wait_clc_enabled(volatile uint32_t *clc)
+{
+	volatile uint32_t spin = 0u;
+
+	/* DISS = bit 1 */
+	while ((*clc) & (1u << 1)) {
+		spin++;
+		if (spin > 1000000u)
+			break;
+	}
+}
+
 static void asclin0_enable_module_clock(void)
 {
 	uint16_t pw_cpu;
@@ -211,15 +224,27 @@ static void asclin0_enable_module_clock(void)
 	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
 	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
 
-	{
-		volatile uint32_t spin = 0u;
+	wait_clc_enabled((volatile uint32_t *)&MODULE_ASCLIN0.CLC.U);
+}
 
-		while (MODULE_ASCLIN0.CLC.B.DISS) {
-			spin++;
-			if (spin > 1000000u)
-				break;
-		}
-	}
+static void stm0_enable_module_clock(void)
+{
+	uint16_t pw_cpu;
+	uint16_t pw_sfty;
+
+	/*
+	 * STM0 CLC.DISR is EndInit-protected.  Accessing TIM0/CMCON while the
+	 * module is gated raises Class 4 (system bus / peripheral error).
+	 */
+	pw_cpu  = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[0]);
+	pw_sfty = IfxScuWdt_getSafetyWatchdogPasswordInline();
+	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
+	IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
+	MODULE_STM0.CLC.B.DISR = 0u;
+	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
+	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
+
+	wait_clc_enabled((volatile uint32_t *)&MODULE_STM0.CLC.U);
 }
 
 void ulmk_board_init(void)
@@ -233,4 +258,5 @@ void ulmk_board_init(void)
 
 	(void)pll_init_20mhz_200mhz();
 	asclin0_enable_module_clock();
+	stm0_enable_module_clock();
 }
