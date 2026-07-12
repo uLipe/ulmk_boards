@@ -161,6 +161,12 @@ static void ch_apply_duty(uint8_t ch)
 		cm1 = 0u;
 	else
 		cm1 = duty_to_cm1(g_ch[ch].period, g_ch[ch].duty);
+	/*
+	 * While the channel is running, CM1 is reloaded from SR1 on each
+	 * period reset when UPEN is set. Write shadows (and CM for the
+	 * current period) so fade steps actually take effect.
+	 */
+	IfxGtm_Tom_Ch_setCompareShadow(g_tom, tch, g_ch[ch].period, cm1);
 	IfxGtm_Tom_Ch_setCompareOne(g_tom, tch, cm1);
 }
 
@@ -176,9 +182,25 @@ static void tgc_set_ch(Ifx_GTM_TOM_TGC *tgc, uint8_t ch, int on)
 	rmw32(&tgc->OUTEN_STAT.U, mask, val);
 }
 
+/* UPEN_CTRLx lives in GLB_CTRL[16+]; 00=no change, 10=enable (bit-pair). */
+static void tgc_enable_upen(Ifx_GTM_TOM_TGC *tgc, uint8_t ch)
+{
+	uint32_t shift = 16u + ((uint32_t)(ch & 7u) << 1);
+
+	tgc->GLB_CTRL.U = 2u << shift;
+}
+
+/* FUPD + RSTCN0 so shadows/counters load on HOST_TRIG. */
+static void tgc_force_update(Ifx_GTM_TOM_TGC *tgc, uint8_t ch)
+{
+	uint32_t shift = ((uint32_t)(ch & 7u) << 1);
+
+	tgc->FUPD_CTRL.U = (2u << shift) | (2u << (16u + shift));
+}
+
 static void tgc_trigger(Ifx_GTM_TOM_TGC *tgc)
 {
-	tgc->GLB_CTRL.U = 1u; /* HOST_TRIG */
+	tgc->GLB_CTRL.U = 1u; /* HOST_TRIG (UPEN bit-pairs = 00 → no change) */
 }
 
 static int ch_hw_start(uint8_t ch)
@@ -199,9 +221,14 @@ static int ch_hw_start(uint8_t ch)
 	/* Active-low LEDs: SL=0 → low during duty (LED on). */
 	IfxGtm_Tom_Ch_setSignalLevel(g_tom, tch, Ifx_ActiveState_low);
 
+	/* UPEN: SR0/SR1 → CM0/CM1 on each CN0 reset (required for live duty). */
+	tgc_enable_upen(tgc, (uint8_t)tch);
+	tgc_force_update(tgc, (uint8_t)tch);
+
 	cm1 = duty_to_cm1(g_ch[ch].period, g_ch[ch].on ? g_ch[ch].duty : 0u);
 	IfxGtm_Tom_Ch_setCompareZero(g_tom, tch, g_ch[ch].period);
 	IfxGtm_Tom_Ch_setCompareOne(g_tom, tch, cm1);
+	IfxGtm_Tom_Ch_setCompareShadow(g_tom, tch, g_ch[ch].period, cm1);
 	IfxGtm_Tom_Ch_setCounterValue(g_tom, tch, 0u);
 
 	tgc_set_ch(tgc, (uint8_t)tch, 1);

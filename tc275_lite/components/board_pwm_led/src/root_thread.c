@@ -19,8 +19,8 @@ void board_timer_sleep_us(uint32_t us);
 #define PWM_CH_LED1		0u
 #define PWM_CH_LED2		1u
 #define PWM_FREQ_HZ		1000u
-#define FADE_STEPS		50u
-#define FADE_STEP_US		20000u	/* 50 × 20 ms = 1 s per ramp */
+#define FADE_STEPS		80u
+#define FADE_STEP_US		50000u	/* 80 × 50 ms ≈ 4 s per ramp */
 
 static void put_u32(uint32_t v)
 {
@@ -97,7 +97,7 @@ void ulmk_root_thread(const ulmk_boot_info_t *info)
 
 	board_console_puts("\r\n");
 	board_console_puts("ulmk: TC275 Lite PWM LED fade (TOM0 CH12/13)\r\n");
-	board_console_puts("LED1/LED2 cross-fade @ 1 kHz PWM, 1 s ramps\r\n");
+	board_console_puts("LED1/LED2 cross-fade @ 1 kHz PWM, ~4 s ramps\r\n");
 
 	round = 0u;
 	for (;;) {
