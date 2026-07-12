@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # tc275_lite/scripts/flash.sh — program ulmk.elf over TAS + AURIX OpenOCD.
+#
+# Contract: convert ELF → erase → program → reset halt/resume → exit.
+# Never leaves OpenOCD hanging; each phase has a hard timeout.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ELF="${1:-}"
-VERBOSE="${ULMK_FLASH_VERBOSE:-1}"
+VERBOSE="${ULMK_FLASH_VERBOSE:-0}"
 VERIFY="${ULMK_FLASH_VERIFY:-0}"
+# Wall-clock budget for the program phase (TAS is slow even with burst).
+FLASH_TIMEOUT="${ULMK_FLASH_TIMEOUT:-90}"
 
 # shellcheck source=/dev/null
 source "$(dirname "$0")/aurix-env.sh"
@@ -17,6 +22,12 @@ fi
 OPENOCD="${ULMK_AURIX_PREFIX}/bin/openocd"
 OCD_SCRIPTS="${ULMK_AURIX_PREFIX}/share/openocd/scripts"
 BOARD_OCD="${ROOT}/openocd"
+# CPU0-only: SMP examine of cpu1/cpu2 only slows flash and is unused.
+OCD_CFG="${BOARD_OCD}/tc275_lite_hil.cfg"
+
+log() { echo "$*"; }
+vlog() { [[ "$VERBOSE" -eq 1 ]] && echo "$*" || true; }
+
 elf_to_hex() {
 	local elf="$1" hex="$2"
 
@@ -25,6 +36,11 @@ elf_to_hex() {
 		echo "failed to produce Intel HEX from ELF: ${elf}" >&2
 		return 1
 	}
+}
+
+kill_openocd() {
+	# Match the binary name only — never -f with a path (kills this shell).
+	pkill -9 -x openocd 2>/dev/null || true
 }
 
 if [[ -z "$ELF" || ! -f "$ELF" ]]; then
@@ -51,48 +67,78 @@ fi
 
 OCD_SEARCH=(-s "$OCD_SCRIPTS" -s "$BOARD_OCD")
 
-if [[ "$VERBOSE" -eq 1 ]]; then
-	echo "openocd: ${OPENOCD}"
-	echo "elf:     ${ELF}"
-	echo "config:  ${BOARD_OCD}/tc275_lite.cfg"
-	"$OPENOCD" --version | head -1
-fi
+vlog "openocd: ${OPENOCD}"
+vlog "elf:     ${ELF}"
+vlog "config:  ${OCD_CFG}"
+[[ "$VERBOSE" -eq 1 ]] && "$OPENOCD" --version | head -1
 
 HEX="$(mktemp "${TMPDIR:-/tmp}/ulmk-flash-XXXXXX.hex")"
-cleanup() { rm -f "$HEX"; }
+OCD_LOG="$(mktemp "${TMPDIR:-/tmp}/ulmk-flash-XXXXXX.log")"
+cleanup() {
+	kill_openocd
+	rm -f "$HEX" "$OCD_LOG"
+}
 trap cleanup EXIT
 
 META="$(elf_to_hex "$ELF" "$HEX" 2>&1)"
-echo "$META" >&2
+vlog "$META"
 LAST_SECTOR="$(echo "$META" | sed -n 's/.*sectors 0-\([0-9][0-9]*\).*/\1/p')"
 if [[ -z "$LAST_SECTOR" ]]; then
 	echo "failed to parse sector range from elf-flash-hex.py" >&2
 	exit 1
 fi
 
-if [[ "$VERBOSE" -eq 1 ]]; then
-	echo "hex:     ${HEX} ($(wc -l < "$HEX") records)"
-	echo "erase:   pflash0 sectors 0-${LAST_SECTOR}"
-fi
+BYTES="$(echo "$META" | sed -n 's/.*packed \([0-9][0-9]*\) bytes.*/\1/p')"
+[[ -n "$BYTES" ]] || BYTES="?"
 
 run_ocd() {
-	"$OPENOCD" "${OCD_SEARCH[@]}" -f "${BOARD_OCD}/tc275_lite.cfg" -c "$1"
+	local label="$1"
+	local timeout_s="$2"
+	local cmd="$3"
+	local t0 t1 ec
+
+	kill_openocd
+	sleep 0.2
+
+	t0="$(date +%s)"
+	set +e
+	timeout --signal=KILL "${timeout_s}" \
+		"$OPENOCD" "${OCD_SEARCH[@]}" -f "$OCD_CFG" -c "$cmd" \
+		>"$OCD_LOG" 2>&1
+	ec=$?
+	set -e
+	t1="$(date +%s)"
+
+	if [[ "$ec" -ne 0 ]]; then
+		echo "FAIL: ${label} (exit ${ec}, $((t1 - t0))s)" >&2
+		tail -30 "$OCD_LOG" >&2 || true
+		return "$ec"
+	fi
+	vlog "ok: ${label} ($((t1 - t0))s)"
+	return 0
 }
 
-# TC27x: erase and program in separate OpenOCD sessions (write cmds fail after erase).
-pkill -9 -f '[o]penocd' 2>/dev/null || true
-sleep 0.3
+log "flash: $(basename "$ELF") (${BYTES} B, sectors 0-${LAST_SECTOR})"
 
-if [[ "$VERBOSE" -eq 1 ]]; then
-	echo "phase 1: erase"
-fi
-run_ocd "gdb port disabled; init; flash erase_sector pflash0 0 ${LAST_SECTOR}; shutdown"
+# TC27x: erase and program must be separate OpenOCD sessions
+# (write_image fails if erase ran in the same init).
+log "  erase..."
+run_ocd erase 20 \
+	"gdb port disabled; init; flash erase_sector pflash0 0 ${LAST_SECTOR}; shutdown"
 
-if [[ "$VERBOSE" -eq 1 ]]; then
-	echo "phase 2: program"
-fi
+log "  program..."
 if [[ "$VERIFY" -eq 1 ]]; then
-	run_ocd "gdb port disabled; init; flash write_image ${HEX} 0; verify_image ${HEX} 0; reset run; shutdown"
+	run_ocd program "$FLASH_TIMEOUT" \
+		"gdb port disabled; init; flash write_image ${HEX} 0; verify_image ${HEX} 0; shutdown"
 else
-	run_ocd "gdb port disabled; init; flash write_image ${HEX} 0; reset run; shutdown"
+	run_ocd program "$FLASH_TIMEOUT" \
+		"gdb port disabled; init; flash write_image ${HEX} 0; shutdown"
 fi
+
+# reset run alone often leaves PC stuck at _start on this TAS path;
+# halt then resume reliably enters userspace.
+log "  start..."
+run_ocd start 15 \
+	"gdb port disabled; init; reset halt; resume; shutdown"
+
+log "  flash + start — done"
