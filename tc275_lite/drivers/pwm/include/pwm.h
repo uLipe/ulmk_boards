@@ -10,8 +10,8 @@
 typedef struct {
 	uint8_t port;
 	uint8_t pin;
-	uint8_t alt;		/* GTM ATOM/TOM alternate */
-	uint8_t atom_channel;	/* logical channel id */
+	uint8_t alt;		/* Port alternate (1 = alt1 for Lite Kit TOM) */
+	uint8_t tom_ch;		/* TOM channel (e.g. 12 for LED1) */
 } pwm_pin_t;
 
 ulmk_tid_t pwm_init(void);

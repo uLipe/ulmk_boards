@@ -10,11 +10,13 @@ int pwm_config(uint8_t ch, const pwm_pin_t *pin, uint32_t freq_hz,
 
 	if (!pin || g_pwm_ep == ULMK_EP_INVALID)
 		return ULMK_ESRCH;
+	if (freq_hz > 0x00FFFFFFu)
+		freq_hz = 0x00FFFFFFu;
 	msg.label    = PWM_MSG_CONFIG;
 	msg.words[0] = ch;
 	msg.words[1] = ((uint32_t)pin->port << 16) | ((uint32_t)pin->pin << 8) |
 		pin->alt;
-	msg.words[2] = freq_hz;
+	msg.words[2] = ((uint32_t)pin->tom_ch << 24) | freq_hz;
 	msg.words[3] = duty_permille;
 	rc = ulmk_ep_call(g_pwm_ep, &msg);
 	if (rc != ULMK_OK)

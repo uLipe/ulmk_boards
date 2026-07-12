@@ -56,6 +56,17 @@
 #define ULMK_BOARD_I2C0_BASE		0xF00C0000u
 #define ULMK_BOARD_CAN_BASE		0xF0018000u
 #define ULMK_BOARD_GTM_BASE		0xF0100000u
+/* GTM cluster clock follows fSPB after board_init PLL (200 MHz / 2). */
+#define ULMK_BOARD_FGTM_HZ		100000000u
+#define ULMK_BOARD_GTM_TOM0_BASE	0xF0108000u
+#define ULMK_BOARD_GTM_CMU_BASE		0xF0100300u
+#define ULMK_BOARD_GTM_TOUTSEL_BASE	0xF019FD30u
+
+/*
+ * Lite Kit LEDs ← GTM TOM0 (active-low, port alt1):
+ *   LED1 P00.5 ← TOM0_CH12 / TOUT14 / ToutSel_a
+ *   LED2 P00.6 ← TOM0_CH13 / TOUT15 / ToutSel_a
+ */
 
 /* LED1 P00.5, LED2 P00.6 (active-low); Button1 P00.7; pot AN0. */
 #define ULMK_BOARD_LED1_PORT		0u
