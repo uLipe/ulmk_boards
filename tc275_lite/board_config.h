@@ -40,6 +40,10 @@
 /* ── Lite Kit peripherals (thin userspace drivers) ─────────────────────── */
 
 #define ULMK_BOARD_VADC_BASE		0xF0020000u
+/* Lite Kit pot on AN0 → VADC G0CH0; VAREF = VDDM = 3.3 V. */
+#define ULMK_BOARD_VADC_VAREF_MV	3300u
+#define ULMK_BOARD_ADC_POT_GROUP	0u
+#define ULMK_BOARD_ADC_POT_CHANNEL	0u
 #define ULMK_BOARD_I2C0_BASE		0xF00C0000u
 #define ULMK_BOARD_CAN_BASE		0xF0018000u
 #define ULMK_BOARD_GTM_BASE		0xF0100000u
