@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 /*
  * tc275_lite/board_timer.h — userspace STM0 sleep/timer service.
+ *
+ * Sleep uses STM0 CMP0 + IRQ notification (not TIM0 busy-wait).
  */
 
 #ifndef BOARD_TIMER_H
