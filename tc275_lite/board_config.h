@@ -25,6 +25,15 @@
 /* TC27D SRC.SRCR.SRE is bit 10 (TOS starts at bit 11). */
 #define ULMK_BOARD_SRC_SRE_BIT		10u
 #define ULMK_BOARD_SRC_STM0_SR0		0xF0038490u
+#define ULMK_BOARD_SRC_ASCLIN0_TX	0xF0038080u
+#define ULMK_BOARD_SRC_ASCLIN0_RX	0xF0038084u
+#define ULMK_BOARD_SRC_VADC_G0_SR0	0xF0038980u
+
+/* SRPN allocation (CPU0) — one priority per service request line. */
+#define ULMK_BOARD_IRQ_STM0		2u
+#define ULMK_BOARD_IRQ_ASCLIN0_TX	3u
+#define ULMK_BOARD_IRQ_ASCLIN0_RX	4u
+#define ULMK_BOARD_IRQ_VADC_G0		5u
 
 /* ── Timer peripheral (STM0, Core 0) — IfxStm_reg.h MODULE_STM0 ─────────── */
 

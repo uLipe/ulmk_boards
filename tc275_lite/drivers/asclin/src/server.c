@@ -1,17 +1,22 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * asclin server — UART via iLLD IfxAsclin_* inlines (CLC enabled in board_init).
+ * asclin server — UART via iLLD inlines; TX/RX wait on SRC IRQ + notif.
+ *
+ * CLC enabled in board_init.  No TX/RX FIFO busy-wait loops.
  */
 #include <ulmk/microkernel.h>
 #include <stdint.h>
 #include "asclin_internal.h"
+#include "board_config.h"
 #include "drivers/common/illd_port.h"
 #include "IfxAsclin_reg.h"
 #include "Asclin/Std/IfxAsclin.h"
 
 #define ASCLIN_STACK_SIZE	2048u
 #define ASCLIN_MAP_SIZE		0x100u
-#define ASCLIN_POLL_LIMIT	500000u
+#define ASCLIN_NOTIF_TX		0u
+#define ASCLIN_NOTIF_RX		1u
+#define ASCLIN_CLK_SETTLE	100000u
 
 typedef struct {
 	uint8_t       n;
@@ -19,6 +24,11 @@ typedef struct {
 	uint32_t      baud;
 	uint32_t      fa_hz;
 	ulmk_ep_t     ep;
+	ulmk_notif_t  irq_notif;
+	uint8_t       tx_srpn;
+	uint8_t       rx_srpn;
+	uintptr_t     tx_src;
+	uintptr_t     rx_src;
 } asclin_args_t;
 
 ulmk_ep_t g_asclin_eps[ASCLIN_MAX];
@@ -41,10 +51,12 @@ static void asclin_set_clock(Ifx_ASCLIN *asc, IfxAsclin_ClockSource src)
 
 	asc->CSR.B.CLKSEL = (uint8_t)src;
 	if (src == IfxAsclin_ClockSource_noClock) {
-		while (IfxAsclin_getClockStatus(asc) != 0u && spin++ < 100000u)
+		while (IfxAsclin_getClockStatus(asc) != 0u &&
+		       spin++ < ASCLIN_CLK_SETTLE)
 			;
 	} else {
-		while (IfxAsclin_getClockStatus(asc) != 1u && spin++ < 100000u)
+		while (IfxAsclin_getClockStatus(asc) != 1u &&
+		       spin++ < ASCLIN_CLK_SETTLE)
 			;
 	}
 }
@@ -120,42 +132,89 @@ static void hw_init(Ifx_ASCLIN *asc, const asclin_pins_t *pins,
 
 	IfxAsclin_setTxFifoInletWidth(asc, IfxAsclin_TxFifoInletWidth_1);
 	IfxAsclin_setRxFifoOutletWidth(asc, IfxAsclin_RxFifoOutletWidth_1);
-	IfxAsclin_setTxFifoInterruptLevel(asc, IfxAsclin_TxFifoInterruptLevel_0);
+	/* TFL when fill ≤15 (space for ≥1 byte); RFL when ≥1 byte. */
+	IfxAsclin_setTxFifoInterruptLevel(asc, IfxAsclin_TxFifoInterruptLevel_15);
 	IfxAsclin_setRxFifoInterruptLevel(asc, IfxAsclin_RxFifoInterruptLevel_1);
-	IfxAsclin_flushTxFifo(asc);
-	IfxAsclin_flushRxFifo(asc);
-	IfxAsclin_enableTxFifoOutlet(asc, TRUE);
-	IfxAsclin_enableRxFifoInlet(asc, TRUE);
 
+	/* Frame mode ASC while clock still off (MODE is clock-gated). */
 	IfxAsclin_setFrameMode(asc, IfxAsclin_FrameMode_asc);
 	asclin_set_clock(asc, IfxAsclin_ClockSource_ascFastClock);
+
+	IfxAsclin_disableAllFlags(asc);
+	IfxAsclin_clearAllFlags(asc);
+
+	/*
+	 * TXFIFOCON/RXFIFOCON: FLUSH is write-only.  Bitfield RMW after a
+	 * non-empty FIFO can drop ENO/ENI — write the whole control word
+	 * after flush.  INW/OUTW must stay 1 (byte); 0 means 0 bytes/access.
+	 */
+	asc->TXFIFOCON.U = 1u; /* FLUSH */
+	asc->TXFIFOCON.U = (15u << 8) | (1u << 6) | (1u << 1);
+	asc->RXFIFOCON.U = 1u; /* FLUSH */
+	asc->RXFIFOCON.U = (1u << 8) | (1u << 6) | (1u << 1);
 }
 
-static int hw_tx(Ifx_ASCLIN *asc, uint8_t byte)
+static int wait_space(asclin_args_t *a, Ifx_ASCLIN *asc)
 {
-	uint32_t cnt;
+	uint32_t bits;
+	int ret;
 
-	for (cnt = 0u; cnt < ASCLIN_POLL_LIMIT; cnt++) {
-		if (IfxAsclin_getTxFifoFillLevel(asc) < 16u) {
-			IfxAsclin_writeTxData(asc, byte);
-			return ULMK_OK;
-		}
-	}
-	return ULMK_ETIMEOUT;
+	if (IfxAsclin_getTxFifoFillLevel(asc) < 16u)
+		return ULMK_OK;
+
+	IfxAsclin_clearTxFifoFillLevelFlag(asc);
+	ulmk_irq_ack(a->tx_srpn);
+	IfxAsclin_enableTxFifoFillLevelFlag(asc, TRUE);
+
+	bits = 0u;
+	ret = ulmk_notif_wait(a->irq_notif, 1u << ASCLIN_NOTIF_TX, &bits);
+
+	IfxAsclin_enableTxFifoFillLevelFlag(asc, FALSE);
+	IfxAsclin_clearTxFifoFillLevelFlag(asc);
+	ulmk_irq_ack(a->tx_srpn);
+	return ret;
 }
 
-static int hw_rx(Ifx_ASCLIN *asc, uint8_t *out, int blocking)
+static int hw_tx(asclin_args_t *a, Ifx_ASCLIN *asc, uint8_t byte)
 {
-	uint32_t cnt;
-	uint32_t limit = blocking ? ASCLIN_POLL_LIMIT : 1u;
+	int ret;
 
-	for (cnt = 0u; cnt < limit; cnt++) {
-		if (IfxAsclin_getRxFifoFillLevel(asc) > 0u) {
-			*out = (uint8_t)IfxAsclin_readRxData(asc);
-			return ULMK_OK;
-		}
+	ret = wait_space(a, asc);
+	if (ret != ULMK_OK)
+		return ret;
+	IfxAsclin_writeTxData(asc, byte);
+	return ULMK_OK;
+}
+
+static int hw_rx(asclin_args_t *a, Ifx_ASCLIN *asc, uint8_t *out, int blocking)
+{
+	uint32_t bits;
+	int ret;
+
+	if (IfxAsclin_getRxFifoFillLevel(asc) > 0u) {
+		*out = (uint8_t)IfxAsclin_readRxData(asc);
+		return ULMK_OK;
 	}
-	return ULMK_ETIMEOUT;
+	if (!blocking)
+		return ULMK_ETIMEOUT;
+
+	IfxAsclin_clearRxFifoFillLevelFlag(asc);
+	ulmk_irq_ack(a->rx_srpn);
+	IfxAsclin_enableRxFifoFillLevelFlag(asc, TRUE);
+
+	bits = 0u;
+	ret = ulmk_notif_wait(a->irq_notif, 1u << ASCLIN_NOTIF_RX, &bits);
+
+	IfxAsclin_enableRxFifoFillLevelFlag(asc, FALSE);
+	IfxAsclin_clearRxFifoFillLevelFlag(asc);
+	ulmk_irq_ack(a->rx_srpn);
+
+	if (ret != ULMK_OK)
+		return ret;
+	if (IfxAsclin_getRxFifoFillLevel(asc) == 0u)
+		return ULMK_ETIMEOUT;
+	*out = (uint8_t)IfxAsclin_readRxData(asc);
+	return ULMK_OK;
 }
 
 static void asclin_server(void *arg)
@@ -193,15 +252,15 @@ static void asclin_server(void *arg)
 		b = 0u;
 		switch (msg.label) {
 		case ASCLIN_MSG_TX_BYTE:
-			reply.words[0] = (uint32_t)hw_tx(asc,
+			reply.words[0] = (uint32_t)hw_tx(a, asc,
 						(uint8_t)msg.words[0]);
 			break;
 		case ASCLIN_MSG_RX_BYTE:
-			reply.words[0] = (uint32_t)hw_rx(asc, &b, 1);
+			reply.words[0] = (uint32_t)hw_rx(a, asc, &b, 1);
 			reply.words[1] = b;
 			break;
 		case ASCLIN_MSG_RX_BYTE_NB:
-			reply.words[0] = (uint32_t)hw_rx(asc, &b, 0);
+			reply.words[0] = (uint32_t)hw_rx(a, asc, &b, 0);
 			reply.words[1] = b;
 			break;
 		case ASCLIN_MSG_SET_BAUD:
@@ -222,21 +281,52 @@ ulmk_tid_t asclin_init(uint8_t n, const asclin_pins_t *pins,
 	ulmk_thread_attr_t attr = {0};
 	ulmk_ep_t ep;
 	ulmk_tid_t tid;
+	ulmk_notif_t notif;
+	int ret;
 
 	if (n >= ASCLIN_MAX || !pins)
 		return ULMK_TID_INVALID;
 	if (g_asclin_eps[n] != ULMK_EP_INVALID)
+		return ULMK_TID_INVALID;
+	/* IRQ wiring is currently defined for ASCLIN0 (Lite Kit console). */
+	if (n != 0u)
 		return ULMK_TID_INVALID;
 
 	ep = ulmk_ep_create();
 	if (ep == ULMK_EP_INVALID)
 		return ULMK_TID_INVALID;
 
+	notif = ulmk_notif_create();
+	if (notif == ULMK_NOTIF_INVALID) {
+		ulmk_ep_destroy(ep);
+		return ULMK_TID_INVALID;
+	}
+
 	g_args[n].n = n;
 	g_args[n].pins = *pins;
 	g_args[n].baud = baud;
 	g_args[n].fa_hz = fa_hz;
 	g_args[n].ep = ep;
+	g_args[n].irq_notif = notif;
+	g_args[n].tx_srpn = ULMK_BOARD_IRQ_ASCLIN0_TX;
+	g_args[n].rx_srpn = ULMK_BOARD_IRQ_ASCLIN0_RX;
+	g_args[n].tx_src = (uintptr_t)ULMK_BOARD_SRC_ASCLIN0_TX;
+	g_args[n].rx_src = (uintptr_t)ULMK_BOARD_SRC_ASCLIN0_RX;
+
+	ret = ulmk_irq_bind_hw(g_args[n].tx_srpn, notif, ASCLIN_NOTIF_TX,
+			       g_args[n].tx_src);
+	if (ret != ULMK_OK)
+		return ULMK_TID_INVALID;
+	ret = ulmk_irq_bind_hw(g_args[n].rx_srpn, notif, ASCLIN_NOTIF_RX,
+			       g_args[n].rx_src);
+	if (ret != ULMK_OK)
+		return ULMK_TID_INVALID;
+	ret = ulmk_irq_enable(g_args[n].tx_srpn);
+	if (ret != ULMK_OK)
+		return ULMK_TID_INVALID;
+	ret = ulmk_irq_enable(g_args[n].rx_srpn);
+	if (ret != ULMK_OK)
+		return ULMK_TID_INVALID;
 
 	attr.name       = "asclin";
 	attr.entry      = asclin_server;
@@ -251,6 +341,7 @@ ulmk_tid_t asclin_init(uint8_t n, const asclin_pins_t *pins,
 		return ULMK_TID_INVALID;
 	}
 	ulmk_cap_grant(tid, ULMK_CAP_MAP_PERIPH);
+	ulmk_cap_grant(tid, ULMK_CAP_IRQ);
 	g_asclin_eps[n] = ep;
 	return tid;
 }

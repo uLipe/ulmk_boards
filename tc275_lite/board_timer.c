@@ -11,7 +11,7 @@
 #include "board_config.h"
 #include "board_timer.h"
 
-#define BOARD_TIMER_SRPN		2u
+#define BOARD_TIMER_SRPN		ULMK_BOARD_IRQ_STM0
 #define BOARD_TIMER_STM0_MAP_SIZE	0x100u
 #define BOARD_TIMER_NOTIF_BIT		0u
 #define BOARD_TIMER_MSG_SLEEP		1u

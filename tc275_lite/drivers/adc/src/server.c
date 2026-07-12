@@ -1,23 +1,26 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * adc server — VADC queued conversion via iLLD SFR (CLC in board_init).
+ * adc server — VADC queued conversion, IRQ + notif (no RES.VF busy-wait).
  *
- * One-shot: flush queue → push channel → TREV → wait RES.VF → return RESULT.
+ * Arm queue → TREV → ulmk_notif_wait(G0 SR0) → read RESULT / ack.
  * AN0 on the Lite Kit is group 0 / channel 0 (VAREF = 3.3 V).
  */
 #include <ulmk/microkernel.h>
 #include <stdint.h>
 #include "adc_internal.h"
+#include "board_config.h"
 #include "IfxVadc_reg.h"
 #include "Vadc/Std/IfxVadc.h"
 
 #define ADC_STACK		1536u
-/* G[] starts at +0x480; one group is 0x400 — cover G0..G1. */
 #define ADC_MAP_SIZE		0x1000u
 #define ADC_MAX_GROUPS		8u
-#define ADC_POLL_LIMIT		200000u
+#define ADC_NOTIF_BIT		0u
+#define ADC_SRPN		ULMK_BOARD_IRQ_VADC_G0
+#define ADC_SRC			ULMK_BOARD_SRC_VADC_G0_SR0
 
 ulmk_ep_t g_adc_ep;
+static ulmk_notif_t g_irq_notif __attribute__((section(".user_bss")));
 static uint8_t g_group __attribute__((section(".user_bss")));
 static uint8_t g_channel __attribute__((section(".user_bss")));
 static uint8_t g_group_ready[ADC_MAX_GROUPS]
@@ -25,13 +28,11 @@ static uint8_t g_group_ready[ADC_MAX_GROUPS]
 
 static void group_hw_init(Ifx_VADC_G *g)
 {
-	/* Analog converter on; queue request slot enabled at prio 1. */
 	g->ARBCFG.B.ANONC = IfxVadc_AnalogConverterMode_normalOperation;
 	g->ARBPR.B.PRIO0  = 1u;
 	g->ARBPR.B.CSM0   = 0u;
 	g->ARBPR.B.ASEN0  = 1u;
 
-	/* Input class 0: 12-bit, modest sample time (STCS ticks). */
 	g->ICLASS[0].B.CMS  = IfxVadc_ChannelResolution_12bit;
 	g->ICLASS[0].B.STCS = 5u;
 
@@ -43,30 +44,42 @@ static void group_hw_init(Ifx_VADC_G *g)
 static void channel_hw_init(Ifx_VADC_G *g, uint8_t ch)
 {
 	IfxVadc_ChannelId cid = (IfxVadc_ChannelId)ch;
+	IfxVadc_ChannelResult rreg = (IfxVadc_ChannelResult)ch;
 
-	g->CHASS.U |= (1u << ch);
-	IfxVadc_setChannelInputClass(g, cid, IfxVadc_InputClasses_group0);
-	IfxVadc_storeGroupResult(g, cid, (IfxVadc_ChannelResult)ch);
 	IfxVadc_setGroupPriorityChannel(g, cid);
+	IfxVadc_setChannelInputClass(g, cid, IfxVadc_InputClasses_group0);
+	IfxVadc_storeGroupResult(g, cid, rreg);
+	IfxVadc_setResultNodeEventPointer0(g, IfxVadc_SrcNr_group0, rreg);
+	IfxVadc_enableServiceRequest(g, rreg);
 }
 
 static int convert_once(Ifx_VADC_G *g, uint8_t ch, uint16_t *out)
 {
 	Ifx_VADC_RES res;
-	uint32_t spin;
+	uint32_t bits;
+	int ret;
+
+	/* Drop stale result / SRC before arming. */
+	g->REFCLR.U = (1u << ch);
+	ulmk_irq_ack(ADC_SRPN);
 
 	IfxVadc_clearQueue(g, TRUE);
 	IfxVadc_addToQueue(g, (IfxVadc_ChannelId)ch, 0u);
 	IfxVadc_startQueue(g);
 
-	for (spin = 0u; spin < ADC_POLL_LIMIT; spin++) {
-		res = IfxVadc_getResult(g, ch);
-		if (res.B.VF) {
-			*out = (uint16_t)res.B.RESULT;
-			return ULMK_OK;
-		}
-	}
-	return ULMK_ETIMEOUT;
+	bits = 0u;
+	ret = ulmk_notif_wait(g_irq_notif, 1u << ADC_NOTIF_BIT, &bits);
+	if (ret != ULMK_OK)
+		return ret;
+
+	res = IfxVadc_getResult(g, ch);
+	g->REFCLR.U = (1u << ch);
+	ulmk_irq_ack(ADC_SRPN);
+
+	if (!res.B.VF)
+		return ULMK_ETIMEOUT;
+	*out = (uint16_t)res.B.RESULT;
+	return ULMK_OK;
 }
 
 static void adc_server(void *arg)
@@ -140,12 +153,29 @@ ulmk_tid_t adc_init(void)
 {
 	ulmk_thread_attr_t attr = {0};
 	ulmk_tid_t tid;
+	int ret;
 
 	if (g_adc_ep != ULMK_EP_INVALID)
 		return ULMK_TID_INVALID;
 	g_adc_ep = ulmk_ep_create();
 	if (g_adc_ep == ULMK_EP_INVALID)
 		return ULMK_TID_INVALID;
+
+	g_irq_notif = ulmk_notif_create();
+	if (g_irq_notif == ULMK_NOTIF_INVALID) {
+		ulmk_ep_destroy(g_adc_ep);
+		g_adc_ep = ULMK_EP_INVALID;
+		return ULMK_TID_INVALID;
+	}
+
+	ret = ulmk_irq_bind_hw(ADC_SRPN, g_irq_notif, ADC_NOTIF_BIT,
+			       (uintptr_t)ADC_SRC);
+	if (ret != ULMK_OK)
+		return ULMK_TID_INVALID;
+	ret = ulmk_irq_enable(ADC_SRPN);
+	if (ret != ULMK_OK)
+		return ULMK_TID_INVALID;
+
 	attr.name = "adc";
 	attr.entry = adc_server;
 	attr.priority = 3u;
@@ -158,5 +188,6 @@ ulmk_tid_t adc_init(void)
 		return ULMK_TID_INVALID;
 	}
 	ulmk_cap_grant(tid, ULMK_CAP_MAP_PERIPH);
+	ulmk_cap_grant(tid, ULMK_CAP_IRQ);
 	return tid;
 }
