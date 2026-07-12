@@ -22,6 +22,7 @@
 #include "IfxGtm_reg.h"
 #include "IfxFlash_reg.h"
 #include "_Impl/IfxScu_cfg.h"
+#include "board_config.h"
 
 #ifndef IFXSCUCCU_OSC_STABLECHK_TIME
 #define IFXSCUCCU_OSC_STABLECHK_TIME	640
@@ -255,6 +256,37 @@ static void bsp_enable_module_clocks(void)
 	MODULE_CAN.FDR.B.STEP = 1023u;
 	MODULE_CAN.FDR.B.DM = 1u;
 	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
+	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
+
+	/*
+	 * I2C0 CLC1 + FDIV — match iLLD IfxI2c_enableModule/setBaudrate:
+	 * CPU EndInit only (not Safety), busy-wait RMC/DISS inside the window.
+	 * Baud1=100 MHz, RMC=1, INC=1, DEC=499 → 100 kbit/s.
+	 */
+	pw_cpu = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[0]);
+	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
+	MODULE_I2C0.CLC1.B.RMC = 1u;
+	while (MODULE_I2C0.CLC1.B.RMC != 1u)
+		;
+	MODULE_I2C0.CLC1.B.DISR = 0u;
+	while (MODULE_I2C0.CLC1.B.DISS == 1u)
+		;
+	MODULE_I2C0.ERRIRQSM.U = 0u;
+	MODULE_I2C0.PIRQSM.U = 0u;
+	MODULE_I2C0.IMSC.U = 0u;
+	MODULE_I2C0.RUNCTRL.U = 0u;
+	MODULE_I2C0.FDIVCFG.B.INC = 1u;
+	MODULE_I2C0.FDIVCFG.B.DEC = 499u;
+	MODULE_I2C0.TIMCFG.B.SDA_DEL_HD_DAT = 0x3Fu;
+	MODULE_I2C0.TIMCFG.B.FS_SCL_LOW = 1u;
+	MODULE_I2C0.TIMCFG.B.EN_SCL_LOW_LEN = 1u;
+	MODULE_I2C0.TIMCFG.B.SCL_LOW_LEN = 0x20u;
+	MODULE_I2C0.ACCEN0.U = 0xFFFFFFFFu;
+	/*
+	 * GPCTL.PISEL must be programmed here (supervisor).  A userspace
+	 * write to GPCTL stalls the SPB on this kit even with RUNCTRL=0.
+	 */
+	MODULE_I2C0.GPCTL.B.PISEL = ULMK_BOARD_I2C0_PISEL;
 	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
 }
 

@@ -192,7 +192,7 @@ Open a serial terminal on the **USB COM port** (115200 8N1) to see
 | 0–1 | PLL, BMHD, STM0, ASCLIN0 console — done |
 | 2 | GPIO (LEDs, button) — done; ADC pot (VADC G0CH0) — done |
 | 3 | CAN0 (TLE9251) — MultiCAN loopback + IRQ RX — done |
-| 4 | I2C — IPC API; datapath TBD |
+| 4 | I2C0 master + `board_i2c_scanner` — done |
 
 `board_services_init()` starts console + timer + gpio + leds.
 Apps call `i2c_init` / `adc_init` / `can_init` / `pwm_init` when needed.
@@ -230,6 +230,18 @@ Internal MultiCAN loopback: **Node0 TX → Node1 RX** with both nodes in LBM
 (Infineon MULTICAN_1 pattern).  Pins **P20.8 / P20.7** (TLE9251) and **P20.6
 #NEN** (driven low) stay muxed for a later real-bus run with `loopback=0`.
 Console prints TX + RX echo at 5 Hz (`id=0x321`).
+
+### I2C scanner (P15.4 / P15.5)
+
+```bash
+python3 tools/dev.py build --board ../ulmk_boards/tc275_lite \
+  --no-components --component board_i2c_scanner
+../ulmk_boards/tc275_lite/scripts/flash.sh ../build/ulipe-tricore-tc275_lite/ulmk
+```
+
+Zephyr-style 7-bit scan on **I2C0** (`P15.4` SCL / `P15.5` SDA, 100 kbit/s).
+Console prints a hex grid (`--` = NACK, address = ACK, `TO` = timeout).
+Needs pull-ups on the bus (typical on Shield2Go / sensor modules).
 
 ### PWM LED fade
 

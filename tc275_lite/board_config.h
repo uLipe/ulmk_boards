@@ -56,6 +56,20 @@
 #define ULMK_BOARD_ADC_POT_GROUP	0u
 #define ULMK_BOARD_ADC_POT_CHANNEL	0u
 #define ULMK_BOARD_I2C0_BASE		0xF00C0000u
+/*
+ * Lite Kit I2C0 (X1 header + Shield2Go/Arduino share the same module):
+ *   SCL  P15.4  alt6  PISEL=c   (also P13.1 on shield)
+ *   SDA  P15.5  alt6  PISEL=c   (also P13.2 on shield)
+ * Needs external pull-ups on the bus (shield modules usually provide them).
+ */
+#define ULMK_BOARD_I2C0_SCL_PORT	15u
+#define ULMK_BOARD_I2C0_SCL_PIN		4u
+#define ULMK_BOARD_I2C0_SCL_ALT		6u
+#define ULMK_BOARD_I2C0_SDA_PORT	15u
+#define ULMK_BOARD_I2C0_SDA_PIN		5u
+#define ULMK_BOARD_I2C0_SDA_ALT		6u
+#define ULMK_BOARD_I2C0_PISEL		2u	/* IfxI2c_PinSelect_c */
+#define ULMK_BOARD_I2C0_BITRATE_HZ	100000u
 #define ULMK_BOARD_CAN_BASE		0xF0018000u
 /*
  * Lite Kit TLE9251V ↔ MultiCAN node 0:

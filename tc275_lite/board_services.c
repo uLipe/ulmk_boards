@@ -18,6 +18,7 @@ void board_services_init(const ulmk_boot_info_t *info)
 	ulmk_board_hil_mark(1u);
 	board_console_start(info);
 	ulmk_board_hil_mark(2u);
+
 	tid = board_timer_start(info);
 	if (tid == ULMK_TID_INVALID)
 		ulmk_board_hil_mark(0x71u);
