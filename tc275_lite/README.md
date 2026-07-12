@@ -133,9 +133,10 @@ tc275_lite/
   board.cmake / board_config.h / memory.ld / bmhd.*
   board_init.c / board_services.*
   board_console.* / board_timer.*
+  components/              board-local demos (board_blinky, board_adc_pot, …)
   deps/                    Ifx_Cfg.h, illd.cmake, illd_tc2x/ (IFASLL)
   drivers/asclin/          ASCLIN UART (polled 8N1)
-  drivers/port/            P14 pin mux for ASCLIN0
+  drivers/adc/             VADC queued conversion (AN0 pot = G0CH0)
   openocd/                 TAS configs + aurix-openocd patch series (upstream PR)
   scripts/                 flash.sh, hil-boot-check.sh, hil-step-test.sh, …
 ```
@@ -189,24 +190,33 @@ Open a serial terminal on the **USB COM port** (115200 8N1) to see
 | Phase | Status |
 |-------|--------|
 | 0–1 | PLL, BMHD, STM0, ASCLIN0 console — done |
-| 2 | GPIO (LEDs, button), ADC (pot) — done |
-| 3 | CAN0 (TLE9251) — done (bring-up loopback API) |
-| 4 | I2C + PWM — done (client–server APIs) |
+| 2 | GPIO (LEDs, button) — done; ADC pot (VADC G0CH0) — done |
+| 3 | CAN0 (TLE9251) — IPC API + pinmux; HW datapath TBD |
+| 4 | I2C + PWM — IPC API; soft/stub datapath TBD |
 
 `board_services_init()` starts console + timer + gpio + leds.
 Apps call `i2c_init` / `adc_init` / `can_init` / `pwm_init` when needed.
+
+Board-local demos live under `components/` (scanned via `ULMK_CHIP_DIR`):
 
 ### Blinky + shell
 
 ```bash
 python3 tools/dev.py build --board ../ulmk_boards/tc275_lite \
   --no-components --component board_blinky
-bash ../ulmk_boards/tc275_lite/scripts/hil-board-blinky.sh \
-  ../build/ulipe-tricore-tc275_lite/ulmk
 ```
 
 USB serial 115200 8N1: commands `help`, `status`, `led1 on|off`, `led2 on|off`.
-Expect `led1=` lines in the RAM console log (HIL smoke).
+
+### ADC potentiometer
+
+```bash
+python3 tools/dev.py build --board ../ulmk_boards/tc275_lite \
+  --no-components --component board_adc_pot
+../ulmk_boards/tc275_lite/scripts/flash.sh ../build/ulipe-tricore-tc275_lite/ulmk
+```
+
+Console prints `pot raw=…  V=x.xxx V` at 5 Hz while you turn the pot (AN0).
 
 ## Hardware notes
 

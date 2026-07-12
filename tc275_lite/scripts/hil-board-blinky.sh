@@ -9,7 +9,7 @@ source "$(dirname "$0")/aurix-env.sh"
 source_aurix_env || exit 1
 
 ELF="${1:-/home/ulipe/fun/build/ulipe-tricore-tc275_lite/ulmk}"
-EXPECT="${HIL_BLINKY_EXPECT:-TC275 Lite blinky}"
+EXPECT="${HIL_BLINKY_EXPECT:-ulmk Microkernel sample: TC275 Lite blinky}"
 GDB_PORT="${ULMK_OCD_GDB_PORT:-3333}"
 
 if [[ ! -f "$ELF" ]]; then
