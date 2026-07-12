@@ -211,9 +211,12 @@ Expect `led1=` lines in the RAM console log (HIL smoke).
 ## Hardware notes
 
 - **Crystal:** 20 MHz → **200 MHz** CPU (`ULMK_BOARD_FCPU_HZ`); STM @ **100 MHz** (`ULMK_BOARD_FSTM_HZ`).
-- **Console:** ASCLIN0 default on **P14.0** (TX) / **P14.1** (RX) per kit manual.
+- **Console:** ASCLIN0 on **P14.0** (TX) / **P14.1** (RX), 115200 8N1.  `ULMK_BOARD_FA_HZ`
+  must match Baud2 (`fMAX / BAUD2DIV` = 200 MHz with the iLLD 200 MHz CCU profile).
+  Host path: `/dev/ttyUSB0` (IFX DAS Lite Kit VCOM).
 - **Timer:** STM0 base `0xF0000000` (TC27D), SR0 @ SRC `0xF0038490`, SRE bit 10, SRPN 2.
-- **BMHD:** `.bmhd` in flash NC alias; CRC must match `_start` — see `bmhd.c`.
+- **BMHD0:** VMA `0xA0000000` (BootROM view), LMA `0x80000000`; `_start` at
+  `0xA0000020`.  CRC must match STAD — see `bmhd.c` / `bmhd.ld.in`.
 
 ## Cert set (with sibling ulmk_apps)
 
@@ -236,8 +239,8 @@ bash ../ulmk_boards/tc275_lite/scripts/hil-silicon-unit.sh \
   ../build/ulipe-tricore-tc275_lite/ulmk
 ```
 
-Oracle: RAM console log via JTAG (`g_ulmk_console_log`).  `/dev/ttyUSB0` on the
-Lite Kit DAS is not a CDC VCOM for ASCLIN.
+Oracle: RAM console log via JTAG (`g_ulmk_console_log`) for HIL scripts that cannot
+own the serial port; live console is `/dev/ttyUSB0` @ 115200 8N1 (ASCLIN0).
 
 ## References
 
