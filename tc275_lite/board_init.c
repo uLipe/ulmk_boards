@@ -16,6 +16,10 @@
 #include "Scu/Std/IfxScuWdt.h"
 #include "IfxAsclin_reg.h"
 #include "IfxStm_reg.h"
+#include "IfxI2c_reg.h"
+#include "IfxVadc_reg.h"
+#include "IfxCan_reg.h"
+#include "IfxGtm_reg.h"
 #include "IfxFlash_reg.h"
 #include "_Impl/IfxScu_cfg.h"
 
@@ -207,44 +211,34 @@ static void wait_clc_enabled(volatile uint32_t *clc)
 	}
 }
 
-static void asclin0_enable_module_clock(void)
+static void bsp_enable_module_clocks(void)
 {
 	uint16_t pw_cpu;
 	uint16_t pw_sfty;
 
 	/*
-	 * ASCLIN CLC.DISR needs EndInit (CPU + safety on TC27x).  Userspace
-	 * driver threads must not touch CLC — only board_init may enable here.
+	 * CLC.DISR is EndInit-protected.  Driver threads (IO=1) must not touch
+	 * CLC — enable ASCLIN0/STM0/I2C0/VADC/CAN/GTM here once at bring-up.
 	 */
 	pw_cpu  = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[0]);
 	pw_sfty = IfxScuWdt_getSafetyWatchdogPasswordInline();
 	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
 	IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
 	MODULE_ASCLIN0.CLC.B.DISR = 0u;
+	MODULE_STM0.CLC.B.DISR = 0u;
+	MODULE_I2C0.CLC.B.DISR = 0u;
+	MODULE_VADC.CLC.B.DISR = 0u;
+	MODULE_CAN.CLC.B.DISR = 0u;
+	MODULE_GTM.CLC.B.DISR = 0u;
 	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
 	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
 
 	wait_clc_enabled((volatile uint32_t *)&MODULE_ASCLIN0.CLC.U);
-}
-
-static void stm0_enable_module_clock(void)
-{
-	uint16_t pw_cpu;
-	uint16_t pw_sfty;
-
-	/*
-	 * STM0 CLC.DISR is EndInit-protected.  Accessing TIM0/CMCON while the
-	 * module is gated raises Class 4 (system bus / peripheral error).
-	 */
-	pw_cpu  = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[0]);
-	pw_sfty = IfxScuWdt_getSafetyWatchdogPasswordInline();
-	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
-	IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
-	MODULE_STM0.CLC.B.DISR = 0u;
-	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
-	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
-
 	wait_clc_enabled((volatile uint32_t *)&MODULE_STM0.CLC.U);
+	wait_clc_enabled((volatile uint32_t *)&MODULE_I2C0.CLC.U);
+	wait_clc_enabled((volatile uint32_t *)&MODULE_VADC.CLC.U);
+	wait_clc_enabled((volatile uint32_t *)&MODULE_CAN.CLC.U);
+	wait_clc_enabled((volatile uint32_t *)&MODULE_GTM.CLC.U);
 }
 
 void ulmk_board_init(void)
@@ -257,6 +251,5 @@ void ulmk_board_init(void)
 	wdt_disable_safety();
 
 	(void)pll_init_20mhz_200mhz();
-	asclin0_enable_module_clock();
-	stm0_enable_module_clock();
+	bsp_enable_module_clocks();
 }

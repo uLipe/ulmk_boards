@@ -6,8 +6,10 @@ Board support package (BSP) for the
 [`ulmk_boards`](../) tree and is consumed by the ulmk kernel via
 `-DULMK_CHIP_DIR`.
 
-**Phase 2+ (current):** GPIO LEDs, ADC/I2C/CAN/PWM board servers (client–server),
-`board_blinky` demo.  Console is ASCLIN0 userspace (USB VCOM).  **No kernel printk**
+**Drivers (current):** self-contained client/server modules under `drivers/`
+(gpio, asclin, i2c, adc, can, pwm) using Infineon iLLD SFR/inlines as HAL.
+Board policy is only `board_console`, `board_leds`, `board_timer`,
+`board_services`.  Console is ASCLIN0 userspace (USB VCOM).  **No kernel printk**
 — `ulmk_printk_char_out` is a no-op; use `board_console_puts()` from apps.
 
 This BSP does **not** ship a `root_thread`.  Your application (or an ulmk
@@ -23,12 +25,17 @@ flowchart TB
         COMP["components / drivers"]
     end
 
-    subgraph bsp["tc275_lite BSP (userspace services)"]
-        BS["board_services_init / _full"]
-        CON["board_console — ASCLIN0 TX/RX"]
-        TIM["board_timer — STM0"]
-        GPIO["board_gpio / board_leds"]
-        PER["adc i2c can pwm"]
+    subgraph bsp["tc275_lite board policy"]
+        BS["board_services_init"]
+        CON["board_console"]
+        TIM["board_timer"]
+        LEDS["board_leds"]
+    end
+
+    subgraph drv["drivers/ autocontained"]
+        GPIO["gpio"]
+        ASCLIN["asclin"]
+        PER["i2c adc can pwm"]
     end
 
     subgraph kern["ulmk kernel + arch/tricore"]
@@ -37,7 +44,7 @@ flowchart TB
     end
 
     subgraph hw["TC275 Lite Kit"]
-        USB["USB ↔ ASCLIN0 P14.0/P14.1"]
+        USB["USB ASCLIN0 P14.0/P14.1"]
         STM["STM0 tick"]
         LED["LED1/2 P00.5/6"]
         PLL["SCU PLL 200 MHz"]
@@ -47,15 +54,16 @@ flowchart TB
     BS --> CON
     BS --> TIM
     BS --> GPIO
-    BS --> PER
-    COMP -->|"board_console_puts / leds"| CON
-    COMP --> GPIO
+    BS --> LEDS
+    CON --> ASCLIN
+    LEDS --> GPIO
+    COMP -->|"optional *_init"| PER
     COMP --> SYS
-    CON --> IPC
-    TIM --> IPC
+    ASCLIN --> IPC
     GPIO --> IPC
+    PER --> IPC
     SYS --> IPC
-    CON --> USB
+    ASCLIN --> USB
     TIM --> STM
     GPIO --> LED
     PLL -.->|"ulmk_board_init"| hw
@@ -63,11 +71,11 @@ flowchart TB
 
 | Layer | Responsibility |
 |-------|----------------|
-| `board_init.c` | CPU0: iLLD WDT EndInit + PLL 20→200 MHz + flash WS |
-| `board_console.c` | ASCLIN0 TX/RX IPC server; RAM log for HIL |
+| `board_init.c` | CPU0: iLLD WDT EndInit + PLL + CLC enable for BSP peripherals |
+| `board_console.c` | Kit wiring: ASCLIN0 + P14.0/1 + RAM log |
 | `board_timer.c` | STM0 + `board_timer_sleep_us()` |
-| `board_gpio.c` / `board_leds.c` | PORT GPIO server; LED1/2 active-low |
-| `board_adc/i2c/can/pwm.c` | Peripheral IPC servers (`init_full`) |
+| `board_leds.c` | LED1/2 active-low on top of `gpio` |
+| `drivers/<name>/` | Public API + client + server; iLLD HAL; pin args in `*_init` |
 | `deps/illd_tc2x/` | Infineon [iLLD TC2x V1.22.0](https://github.com/Infineon/illd_release_tc2x) (IFASLL) |
 
 **Single core:** SMP is not supported; bring-up targets **CPU0** only.
@@ -91,13 +99,32 @@ git sparse-checkout set src/TC27D \
 ```
 
 `board_init` uses **header-only** iLLD WDT inlines (`IfxScuWdt_*Inline`) and
-SFR / `IfxScu_cfg.h` macros.  `IfxScuCcu.c` is **not** linked: it has `.data`
-and cannot run before `.data` relocation.  License: IFASLL (see
-`deps/illd_tc2x/IFASLL202501.pdf`); board MIT sources stay separate.
+enables peripheral CLC (ASCLIN0, STM0, I2C0, VADC, CAN, GTM) under EndInit.
+`IfxScuCcu.c` / full `IfxPort.c` / `IfxAsclin.c` are **not** linked into
+userspace: those call `mfcr` via EndInit helpers and trap at `ULMK_PRIV_DRIVER`.
+Driver servers use iLLD **SFR types + IFX_INLINE** APIs after `ulmk_mem_map`.
+License: IFASLL (see `deps/illd_tc2x/IFASLL202501.pdf`); board MIT sources stay separate.
 
-**Userspace drivers later:** iLLD `MODULE_*` bases are physical.  Console /
-GPIO threads must `ulmk_mem_map` the MMIO window (or wrap drivers with a
-mapped base) before calling iLLD — not required for `board_init`.
+### Using extra peripherals from an app
+
+```c
+#include <i2c.h>
+#include <adc.h>
+#include <can.h>
+#include <pwm.h>
+
+void ulmk_root_thread(const ulmk_boot_info_t *info)
+{
+	i2c_pins_t i2c_pins = { /* SCL/SDA port/pin/alt from your schematic */ };
+	adc_channel_t pot = { .group = 0, .channel = 0 };
+
+	board_services_init(info);	/* console + timer + gpio + leds */
+	(void)i2c_init(0, &i2c_pins, 100000u);
+	(void)adc_init();
+	(void)adc_config(&pot);
+	/* can_init / pwm_init similarly — pins chosen by the app */
+}
+```
 
 ## Directory layout
 
@@ -166,8 +193,8 @@ Open a serial terminal on the **USB COM port** (115200 8N1) to see
 | 3 | CAN0 (TLE9251) — done (bring-up loopback API) |
 | 4 | I2C + PWM — done (client–server APIs) |
 
-`board_services_init()` starts console + timer + gpio/leds (cert path).
-`board_services_init_full()` also starts ADC/I2C/CAN/PWM (blinky / demos).
+`board_services_init()` starts console + timer + gpio + leds.
+Apps call `i2c_init` / `adc_init` / `can_init` / `pwm_init` when needed.
 
 ### Blinky + shell
 
@@ -179,6 +206,7 @@ bash ../ulmk_boards/tc275_lite/scripts/hil-board-blinky.sh \
 ```
 
 USB serial 115200 8N1: commands `help`, `status`, `led1 on|off`, `led2 on|off`.
+Expect `led1=` lines in the RAM console log (HIL smoke).
 
 ## Hardware notes
 
@@ -199,7 +227,7 @@ USB serial 115200 8N1: commands `help`, `status`, `led1 on|off`, `led2 on|off`.
 | `board_blinky` | `scripts/hil-board-blinky.sh` |
 
 Order: baseline → e2e → unit → stress → wcet.  Blinky is the BSP demo (not a cert gate).
-Expect `SILICON_*: PASS` / `BOARD_BLINKY: PASS` in the RAM log.
+Expect `SILICON_*: PASS` in the RAM log; blinky smoke looks for `led1=`.
 
 ```bash
 python3 tools/dev.py build --board ../ulmk_boards/tc275_lite \

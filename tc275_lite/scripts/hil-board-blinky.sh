@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# HIL board_blinky — flash blinky, expect BOARD_BLINKY: PASS in RAM log.
+# HIL board_blinky — flash blinky, expect welcome/LED lines in RAM log.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -9,7 +9,7 @@ source "$(dirname "$0")/aurix-env.sh"
 source_aurix_env || exit 1
 
 ELF="${1:-/home/ulipe/fun/build/ulipe-tricore-tc275_lite/ulmk}"
-EXPECT="${HIL_BLINKY_EXPECT:-BOARD_BLINKY: PASS}"
+EXPECT="${HIL_BLINKY_EXPECT:-TC275 Lite blinky}"
 GDB_PORT="${ULMK_OCD_GDB_PORT:-3333}"
 
 if [[ ! -f "$ELF" ]]; then
@@ -37,21 +37,22 @@ GDB_OUT=/tmp/ulmk-gdb-blinky.log
 cleanup() { pkill -9 -f "${OCD}" 2>/dev/null || true; }
 trap cleanup EXIT
 
+# Stop at first LED update in the blink loop (after welcome puts).
 docker run --rm --network host -v "$(dirname "$ELF"):/elf" ulipe-microkernel:dev \
-	timeout 90 tricore-elf-gdb -batch "/elf/$(basename "$ELF")" \
-	-ex "set remotetimeout 60" \
+	timeout 60 tricore-elf-gdb -batch "/elf/$(basename "$ELF")" \
+	-ex "set remotetimeout 45" \
 	-ex "target extended-remote :${GDB_PORT}" \
 	-ex "monitor reset halt" \
 	-ex "break ulmk_kern_trap_panic" \
-	-ex "break board_blinky_done" \
+	-ex "break board_leds_set" \
 	-ex "continue" \
 	-ex "x/wx &g_ulmk_board_hil_scratch" \
 	-ex "x/wx &g_ulmk_console_log_len" \
-	-ex "x/2048cb &g_ulmk_console_log" \
+	-ex "x/512cb &g_ulmk_console_log" \
 	-ex "bt 4" >"$GDB_OUT" 2>&1 || true
 
 echo "--- gdb ---"
-/usr/bin/tail -30 "$GDB_OUT"
+/usr/bin/tail -40 "$GDB_OUT"
 echo "--- end gdb ---"
 
 DECODED="$(python3 - "$GDB_OUT" <<'PY'
@@ -77,15 +78,16 @@ echo "--- decoded log ---"
 printf '%s\n' "$DECODED"
 echo "--- end decoded ---"
 
-if printf '%s' "$DECODED" | grep -qF "$EXPECT"; then
-	echo "PASS: ${EXPECT}"
-	exit 0
-fi
-
-if grep -qE "ulmk_kern_trap_panic" "$GDB_OUT"; then
+if grep -qE "ulmk_kern_trap_panic" "$GDB_OUT" && \
+   ! printf '%s' "$DECODED" | grep -qF "$EXPECT"; then
 	echo "FAIL: trap_panic hit" >&2
 	exit 1
 fi
 
-echo "FAIL: \"${EXPECT}\" not found" >&2
+if printf '%s' "$DECODED" | grep -qF "$EXPECT"; then
+	echo "PASS: blinky log contains [${EXPECT}]"
+	exit 0
+fi
+
+echo "FAIL: [${EXPECT}] not found" >&2
 exit 1

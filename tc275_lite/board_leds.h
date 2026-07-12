@@ -2,7 +2,6 @@
 #ifndef BOARD_LEDS_H
 #define BOARD_LEDS_H
 
-#include <ulmk/microkernel.h>
 #include <stdint.h>
 
 #define BOARD_LED_1	0u
