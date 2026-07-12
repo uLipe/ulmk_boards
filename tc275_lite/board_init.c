@@ -229,6 +229,7 @@ static void bsp_enable_module_clocks(void)
 	MODULE_I2C0.CLC.B.DISR = 0u;
 	MODULE_VADC.CLC.B.DISR = 0u;
 	MODULE_CAN.CLC.B.DISR = 0u;
+	MODULE_CAN.CLC.B.EDIS = 1u; /* ignore sleep request */
 	MODULE_GTM.CLC.B.DISR = 0u;
 	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
 	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
@@ -239,6 +240,22 @@ static void bsp_enable_module_clocks(void)
 	wait_clc_enabled((volatile uint32_t *)&MODULE_VADC.CLC.U);
 	wait_clc_enabled((volatile uint32_t *)&MODULE_CAN.CLC.U);
 	wait_clc_enabled((volatile uint32_t *)&MODULE_GTM.CLC.U);
+
+	/*
+	 * MultiCAN fCAN = fSPB (100 MHz): CLKSEL=fclc, FDR STEP=1023 DM=1.
+	 * FDR/MCR writes sit under EndInit on some silicon revisions — do
+	 * them here so the userspace driver never touches EndInit.
+	 */
+	pw_cpu  = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[0]);
+	pw_sfty = IfxScuWdt_getSafetyWatchdogPasswordInline();
+	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
+	IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
+	MODULE_CAN.MCR.B.CLKSEL = 0u;
+	MODULE_CAN.MCR.B.CLKSEL = 1u; /* fclc = fSPB */
+	MODULE_CAN.FDR.B.STEP = 1023u;
+	MODULE_CAN.FDR.B.DM = 1u;
+	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
+	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
 }
 
 void ulmk_board_init(void)

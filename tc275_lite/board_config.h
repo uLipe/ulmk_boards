@@ -28,12 +28,14 @@
 #define ULMK_BOARD_SRC_ASCLIN0_TX	0xF0038080u
 #define ULMK_BOARD_SRC_ASCLIN0_RX	0xF0038084u
 #define ULMK_BOARD_SRC_VADC_G0_SR0	0xF0038980u
+#define ULMK_BOARD_SRC_CAN0_INT0	0xF0038900u
 
 /* SRPN allocation (CPU0) — one priority per service request line. */
 #define ULMK_BOARD_IRQ_STM0		2u
 #define ULMK_BOARD_IRQ_ASCLIN0_TX	3u
 #define ULMK_BOARD_IRQ_ASCLIN0_RX	4u
 #define ULMK_BOARD_IRQ_VADC_G0		5u
+#define ULMK_BOARD_IRQ_CAN0		6u
 
 /* ── Timer peripheral (STM0, Core 0) — IfxStm_reg.h MODULE_STM0 ─────────── */
 
@@ -55,6 +57,18 @@
 #define ULMK_BOARD_ADC_POT_CHANNEL	0u
 #define ULMK_BOARD_I2C0_BASE		0xF00C0000u
 #define ULMK_BOARD_CAN_BASE		0xF0018000u
+/*
+ * Lite Kit TLE9251V ↔ MultiCAN node 0:
+ *   TX  P20.8  TXDCAN0  (alt5)
+ *   RX  P20.7  RXDCAN0B (RXSEL=b)
+ *   #NEN P20.6  GPIO out low → transceiver normal mode
+ */
+#define ULMK_BOARD_CAN_TX_PORT		20u
+#define ULMK_BOARD_CAN_TX_PIN		8u
+#define ULMK_BOARD_CAN_RX_PORT		20u
+#define ULMK_BOARD_CAN_RX_PIN		7u
+#define ULMK_BOARD_CAN_NEN_PORT		20u
+#define ULMK_BOARD_CAN_NEN_PIN		6u
 #define ULMK_BOARD_GTM_BASE		0xF0100000u
 /* GTM cluster clock follows fSPB after board_init PLL (200 MHz / 2). */
 #define ULMK_BOARD_FGTM_HZ		100000000u

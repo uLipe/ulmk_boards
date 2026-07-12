@@ -191,8 +191,8 @@ Open a serial terminal on the **USB COM port** (115200 8N1) to see
 |-------|--------|
 | 0–1 | PLL, BMHD, STM0, ASCLIN0 console — done |
 | 2 | GPIO (LEDs, button) — done; ADC pot (VADC G0CH0) — done |
-| 3 | CAN0 (TLE9251) — IPC API + pinmux; HW datapath TBD |
-| 4 | I2C + PWM — IPC API; soft/stub datapath TBD |
+| 3 | CAN0 (TLE9251) — MultiCAN loopback + IRQ RX — done |
+| 4 | I2C — IPC API; datapath TBD |
 
 `board_services_init()` starts console + timer + gpio + leds.
 Apps call `i2c_init` / `adc_init` / `can_init` / `pwm_init` when needed.
@@ -217,6 +217,26 @@ python3 tools/dev.py build --board ../ulmk_boards/tc275_lite \
 ```
 
 Console prints `pot raw=…  V=x.xxx V` at 5 Hz while you turn the pot (AN0).
+
+### CAN loopback (TLE9251 pins)
+
+```bash
+python3 tools/dev.py build --board ../ulmk_boards/tc275_lite \
+  --no-components --component board_can_loopback
+../ulmk_boards/tc275_lite/scripts/flash.sh ../build/ulipe-tricore-tc275_lite/ulmk
+```
+
+Internal MultiCAN loopback: **Node0 TX → Node1 RX** with both nodes in LBM
+(Infineon MULTICAN_1 pattern).  Pins **P20.8 / P20.7** (TLE9251) and **P20.6
+#NEN** (driven low) stay muxed for a later real-bus run with `loopback=0`.
+Console prints TX + RX echo at 5 Hz (`id=0x321`).
+
+### PWM LED fade
+
+```bash
+python3 tools/dev.py build --board ../ulmk_boards/tc275_lite \
+  --no-components --component board_pwm_led
+```
 
 ## Hardware notes
 
