@@ -13,7 +13,11 @@
 
 #define ULMK_BOARD_FOSC_HZ		20000000u
 #define ULMK_BOARD_FCPU_HZ		200000000u
-#define ULMK_BOARD_FA_HZ		100000000u	/* fCPU / 2 — ASCLIN fA */
+/*
+ * ASCLIN CSR=ascFastClock → fBaud2 = fMAX / CCUCON0.BAUD2DIV.
+ * iLLD 200 MHz profile sets BAUD2DIV=1 → 200 MHz (not fSPB).
+ */
+#define ULMK_BOARD_FA_HZ		200000000u
 
 /* ── IRQ: AURIX Service Request (SRC) block — TC27x layout ───────────── */
 
