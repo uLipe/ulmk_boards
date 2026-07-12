@@ -365,8 +365,15 @@ static int tc3xx_write(struct flash_bank *bank, const uint8_t *buffer,
 	while (page_offset < count) {
 		uint32_t chunk = MIN(32u, count - page_offset);
 
-		if (!tc3xx_bank->tc2xx && (count - page_offset) >= 256) {
-			/* TC3xx burst path — keep original batched behaviour */
+		/*
+		 * TC3xx: hardware burst (256 B / cmd 0xA6).
+		 * TC2xx: 32 B page writes only (cmd 0xAA).  Enabling the TC3xx
+		 * burst sequence on TC275 left PFlash unreadable over OCDS and
+		 * cold-boot trapped in class 3 — do not re-enable without a
+		 * verified TC27x burst path + readback.
+		 */
+		if (!tc3xx_bank->tc2xx && (count - page_offset) >= 256 &&
+		    (((offset + page_offset) & 0xFFu) == 0u)) {
 			uint32_t i;
 
 			err = aurix_ocds_queue_soc_write_u32(ocds, 0xAF005554, 0x50);
@@ -409,6 +416,13 @@ static int tc3xx_write(struct flash_bank *bank, const uint8_t *buffer,
 		if (err)
 			goto err;
 		page_offset += 32;
+	}
+
+	/* Leave command interface in read mode so CPU/OCDS can fetch PFlash. */
+	if (tc3xx_bank->tc2xx) {
+		err = tc3xx_reset_to_read(ocds);
+		if (err)
+			goto err;
 	}
 
 	return ERROR_OK;
