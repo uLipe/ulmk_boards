@@ -12,7 +12,7 @@
 #include <stdint.h>
 #include "pwm_internal.h"
 #include "board_config.h"
-#include "drivers/common/illd_port.h"
+#include "pinmux_internal.h"
 #include "IfxGtm_reg.h"
 #include "Gtm/Std/IfxGtm_Tom.h"
 
@@ -35,6 +35,27 @@ struct pwm_ch {
 	int      used;
 };
 
+struct pwm_board_ch {
+	uint8_t port;
+	uint8_t pin;
+	uint8_t alt;
+	uint8_t tom_ch;
+	uint8_t tout_n;
+};
+
+static const struct pwm_board_ch g_board_ch[PWM_MAX_CH] = {
+	{
+		ULMK_BOARD_PWM0_PORT, ULMK_BOARD_PWM0_PIN,
+		ULMK_BOARD_PWM0_ALT, ULMK_BOARD_PWM0_TOM_CH,
+		ULMK_BOARD_PWM0_TOUT,
+	},
+	{
+		ULMK_BOARD_PWM1_PORT, ULMK_BOARD_PWM1_PIN,
+		ULMK_BOARD_PWM1_ALT, ULMK_BOARD_PWM1_TOM_CH,
+		ULMK_BOARD_PWM1_TOUT,
+	},
+};
+
 ulmk_ep_t g_pwm_ep;
 static struct pwm_ch g_ch[PWM_MAX_CH] __attribute__((section(".user_bss")));
 static Ifx_GTM_TOM *g_tom __attribute__((section(".user_bss")));
@@ -51,28 +72,15 @@ static void rmw32(volatile void *reg, uint32_t mask, uint32_t val)
 	*r = (*r & ~mask) | (val & mask);
 }
 
-static int resolve_route(uint8_t port, uint8_t pin, uint8_t tom_ch_hint,
-			 uint8_t *tom_ch, uint8_t *tout_n, uint8_t *tout_sel)
+static int resolve_route(uint8_t n, uint8_t *tom_ch, uint8_t *tout_n,
+			 uint8_t *tout_sel)
 {
-	if (port == 0u && pin == 5u) {
-		*tom_ch = 12u;
-		*tout_n = 14u;
-		*tout_sel = 0u; /* ToutSel_a */
-		return 0;
-	}
-	if (port == 0u && pin == 6u) {
-		*tom_ch = 13u;
-		*tout_n = 15u;
-		*tout_sel = 0u;
-		return 0;
-	}
-	if (tom_ch_hint <= 15u) {
-		*tom_ch = tom_ch_hint;
-		*tout_n = 0u;
-		*tout_sel = 0u;
-		return 0;
-	}
-	return -1;
+	if (n >= PWM_MAX_CH)
+		return -1;
+	*tom_ch = g_board_ch[n].tom_ch;
+	*tout_n = g_board_ch[n].tout_n;
+	*tout_sel = 0u; /* ToutSel_a */
+	return 0;
 }
 
 static void cmu_ensure(void)
@@ -103,24 +111,15 @@ static void tout_route(uint8_t tout_n, uint8_t tout_sel)
 
 static void pin_tom_alt(uint8_t port, uint8_t pin, uint8_t alt)
 {
-	Ifx_P *p;
-	void *m;
-	IfxPort_Mode mode;
+	pinmux_cfg_t cfg;
 
-	p = illd_port_module(port);
-	if (!p)
-		return;
-	m = ulmk_mem_map((void *)p, ILLD_PORT_MAP_SIZE,
-			 ULMK_PERM_READ | ULMK_PERM_WRITE, ULMK_MMAP_PERIPH);
-	if (!m)
-		return;
-	switch (alt) {
-	case 1u: mode = IfxPort_Mode_outputPushPullAlt1; break;
-	case 2u: mode = IfxPort_Mode_outputPushPullAlt2; break;
-	case 3u: mode = IfxPort_Mode_outputPushPullAlt3; break;
-	default: mode = IfxPort_Mode_outputPushPullAlt1; break;
-	}
-	illd_port_set_mode((Ifx_P *)m, pin, mode);
+	cfg.port  = port;
+	cfg.pin   = pin;
+	cfg.dir   = PINMUX_DIR_OUT;
+	cfg.pull  = PINMUX_PULL_NONE;
+	cfg.alt   = alt ? alt : 1u;
+	cfg.flags = 0u;
+	(void)pinmux_apply(&cfg);
 }
 
 static uint16_t freq_to_period(uint32_t freq_hz)
@@ -300,22 +299,17 @@ static void pwm_server(void *arg)
 		if (ch >= PWM_MAX_CH) {
 			reply.words[0] = (uint32_t)ULMK_EINVAL;
 		} else if (msg.label == PWM_MSG_CONFIG) {
-			g_ch[ch].port = (uint8_t)(msg.words[1] >> 16);
-			g_ch[ch].pin  = (uint8_t)((msg.words[1] >> 8) & 0xFFu);
-			g_ch[ch].alt  = (uint8_t)(msg.words[1] & 0xFFu);
-			if (g_ch[ch].alt == 0u)
-				g_ch[ch].alt = 1u;
-			if (resolve_route(g_ch[ch].port, g_ch[ch].pin,
-					  (uint8_t)(msg.words[2] >> 24),
-					  &tom_ch, &tout_n, &tout_sel) != 0) {
+			if (resolve_route(ch, &tom_ch, &tout_n, &tout_sel) != 0) {
 				reply.words[0] = (uint32_t)ULMK_EINVAL;
 			} else {
+				g_ch[ch].port = g_board_ch[ch].port;
+				g_ch[ch].pin = g_board_ch[ch].pin;
+				g_ch[ch].alt = g_board_ch[ch].alt;
 				g_ch[ch].tom_ch = tom_ch;
 				g_ch[ch].tout_n = tout_n;
 				g_ch[ch].tout_sel = tout_sel;
-				g_ch[ch].period = freq_to_period(
-					msg.words[2] & 0x00FFFFFFu);
-				g_ch[ch].duty = msg.words[3];
+				g_ch[ch].period = freq_to_period(msg.words[1]);
+				g_ch[ch].duty = msg.words[2];
 				g_ch[ch].used = 1;
 				g_ch[ch].on = 0;
 				reply.words[0] = (uint32_t)ch_hw_start(ch);
@@ -344,11 +338,13 @@ static void pwm_server(void *arg)
 	}
 }
 
-ulmk_tid_t pwm_init(void)
+ulmk_tid_t pwm_init(uint8_t mod)
 {
 	ulmk_thread_attr_t attr = {0};
 	ulmk_tid_t tid;
 
+	if (mod != 0u)
+		return ULMK_TID_INVALID;
 	if (g_pwm_ep != ULMK_EP_INVALID)
 		return ULMK_TID_INVALID;
 	g_pwm_ep = ulmk_ep_create();

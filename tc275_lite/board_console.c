@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * board_console.c — kit policy: ASCLIN0 on P14.0/P14.1 + RAM log for HIL.
+ * board_console.c — kit policy: ASCLIN0 + RAM log for HIL.
  */
 #include <stdint.h>
 #include <ulmk/microkernel.h>
@@ -56,21 +56,13 @@ int board_console_getc(char *out)
 
 ulmk_tid_t board_console_start(const ulmk_boot_info_t *info)
 {
-	asclin_pins_t pins;
 	ulmk_tid_t tid;
 
 	(void)info;
 	g_ulmk_console_log_len = 0u;
 
-	/* Lite Kit USB–UART bridge: P14.0 TX alt2, P14.1 RX ALTI0. */
-	pins.tx_port = 14u;
-	pins.tx_pin  = 0u;
-	pins.tx_alt  = 2u;
-	pins.rx_port = 14u;
-	pins.rx_pin  = 1u;
-	pins.rx_alti = 0u;
-
-	tid = asclin_init(CONSOLE_ASCLIN, &pins, ULMK_BOARD_CONSOLE_BAUD,
+	/* Pins/alt from board_config via asclin_init(NULL pins). */
+	tid = asclin_init(CONSOLE_ASCLIN, NULL, ULMK_BOARD_CONSOLE_BAUD,
 			  ULMK_BOARD_FA_HZ);
 	return tid;
 }

@@ -7,6 +7,7 @@
 #include "board_console.h"
 #include "board_timer.h"
 #include "board_leds.h"
+#include <pinmux.h>
 #include <gpio.h>
 
 void ulmk_board_hil_mark(uint32_t n);
@@ -16,6 +17,11 @@ void board_services_init(const ulmk_boot_info_t *info)
 	ulmk_tid_t tid;
 
 	ulmk_board_hil_mark(1u);
+
+	tid = pinmux_init(0u);
+	if (tid == ULMK_TID_INVALID)
+		ulmk_board_hil_mark(0x70u);
+
 	board_console_start(info);
 	ulmk_board_hil_mark(2u);
 
@@ -25,7 +31,7 @@ void board_services_init(const ulmk_boot_info_t *info)
 	else
 		ulmk_board_hil_mark(3u);
 
-	tid = gpio_init();
+	tid = gpio_init(0u);
 	if (tid != ULMK_TID_INVALID)
 		(void)board_leds_init();
 }

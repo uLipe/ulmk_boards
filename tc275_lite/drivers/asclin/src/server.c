@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include "asclin_internal.h"
 #include "board_config.h"
-#include "drivers/common/illd_port.h"
+#include "pinmux_internal.h"
 #include "IfxAsclin_reg.h"
 #include "Asclin/Std/IfxAsclin.h"
 
@@ -21,6 +21,7 @@
 typedef struct {
 	uint8_t       n;
 	asclin_pins_t pins;
+	uint8_t       tx_alt;
 	uint32_t      baud;
 	uint32_t      fa_hz;
 	ulmk_ep_t     ep;
@@ -61,39 +62,25 @@ static void asclin_set_clock(Ifx_ASCLIN *asc, IfxAsclin_ClockSource src)
 	}
 }
 
-static void pinmux(const asclin_pins_t *p)
+static void pinmux_asclin(const asclin_args_t *a)
 {
-	Ifx_P *tx;
-	Ifx_P *rx;
-	void *m;
-	IfxPort_Mode mode;
+	pinmux_cfg_t cfg;
 
-	if (p->tx_alt != 0u) {
-		tx = illd_port_module(p->tx_port);
-		if (tx) {
-			m = ulmk_mem_map((void *)tx, ILLD_PORT_MAP_SIZE,
-					 ULMK_PERM_READ | ULMK_PERM_WRITE,
-					 ULMK_MMAP_PERIPH);
-			if (m) {
-				switch (p->tx_alt) {
-				case 1u: mode = IfxPort_Mode_outputPushPullAlt1; break;
-				case 2u: mode = IfxPort_Mode_outputPushPullAlt2; break;
-				case 3u: mode = IfxPort_Mode_outputPushPullAlt3; break;
-				default: mode = IfxPort_Mode_outputPushPullAlt2; break;
-				}
-				illd_port_set_mode((Ifx_P *)m, p->tx_pin, mode);
-			}
-		}
-	}
-	rx = illd_port_module(p->rx_port);
-	if (rx) {
-		m = ulmk_mem_map((void *)rx, ILLD_PORT_MAP_SIZE,
-				 ULMK_PERM_READ | ULMK_PERM_WRITE,
-				 ULMK_MMAP_PERIPH);
-		if (m)
-			illd_port_set_mode((Ifx_P *)m, p->rx_pin,
-					   IfxPort_Mode_inputPullUp);
-	}
+	cfg.port  = a->pins.tx_port;
+	cfg.pin   = a->pins.tx_pin;
+	cfg.dir   = PINMUX_DIR_OUT;
+	cfg.pull  = PINMUX_PULL_NONE;
+	cfg.alt   = a->tx_alt;
+	cfg.flags = 0u;
+	(void)pinmux_apply(&cfg);
+
+	cfg.port  = a->pins.rx_port;
+	cfg.pin   = a->pins.rx_pin;
+	cfg.dir   = PINMUX_DIR_IN;
+	cfg.pull  = PINMUX_PULL_UP;
+	cfg.alt   = PINMUX_ALT_GPIO;
+	cfg.flags = 0u;
+	(void)pinmux_apply(&cfg);
 }
 
 static void hw_set_baud(Ifx_ASCLIN *asc, uint32_t baud, uint32_t fa_hz)
@@ -240,7 +227,7 @@ static void asclin_server(void *arg)
 			;
 	asc = (Ifx_ASCLIN *)mapped;
 
-	pinmux(&a->pins);
+	pinmux_asclin(a);
 	hw_init(asc, &a->pins, a->baud, a->fa_hz);
 
 	for (;;) {
@@ -282,15 +269,25 @@ ulmk_tid_t asclin_init(uint8_t n, const asclin_pins_t *pins,
 	ulmk_ep_t ep;
 	ulmk_tid_t tid;
 	ulmk_notif_t notif;
+	asclin_pins_t def;
 	int ret;
 
-	if (n >= ASCLIN_MAX || !pins)
+	if (n >= ASCLIN_MAX)
 		return ULMK_TID_INVALID;
 	if (g_asclin_eps[n] != ULMK_EP_INVALID)
 		return ULMK_TID_INVALID;
 	/* IRQ wiring is currently defined for ASCLIN0 (Lite Kit console). */
 	if (n != 0u)
 		return ULMK_TID_INVALID;
+
+	if (!pins) {
+		def.tx_port = ULMK_BOARD_ASCLIN0_TX_PORT;
+		def.tx_pin  = ULMK_BOARD_ASCLIN0_TX_PIN;
+		def.rx_port = ULMK_BOARD_ASCLIN0_RX_PORT;
+		def.rx_pin  = ULMK_BOARD_ASCLIN0_RX_PIN;
+		def.rx_alti = ULMK_BOARD_ASCLIN0_RX_ALTI;
+		pins = &def;
+	}
 
 	ep = ulmk_ep_create();
 	if (ep == ULMK_EP_INVALID)
@@ -304,6 +301,7 @@ ulmk_tid_t asclin_init(uint8_t n, const asclin_pins_t *pins,
 
 	g_args[n].n = n;
 	g_args[n].pins = *pins;
+	g_args[n].tx_alt = ULMK_BOARD_ASCLIN0_TX_ALT;
 	g_args[n].baud = baud;
 	g_args[n].fa_hz = fa_hz;
 	g_args[n].ep = ep;

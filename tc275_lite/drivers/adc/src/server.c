@@ -149,12 +149,14 @@ static void adc_server(void *arg)
 	}
 }
 
-ulmk_tid_t adc_init(void)
+ulmk_tid_t adc_init(uint8_t n)
 {
 	ulmk_thread_attr_t attr = {0};
 	ulmk_tid_t tid;
 	int ret;
 
+	if (n != 0u)
+		return ULMK_TID_INVALID;
 	if (g_adc_ep != ULMK_EP_INVALID)
 		return ULMK_TID_INVALID;
 	g_adc_ep = ulmk_ep_create();

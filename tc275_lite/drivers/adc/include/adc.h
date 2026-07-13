@@ -4,14 +4,16 @@
 
 #include <ulmk/microkernel.h>
 #include <stdint.h>
+#include "board_config.h"
 
-typedef struct {
-	uint8_t group;		/* VADC group */
-	uint8_t channel;	/* channel within group */
-} adc_channel_t;
+#define ADC_MAX	ULMK_BOARD_ADC_MAX
 
-ulmk_tid_t adc_init(void);
-int adc_config(const adc_channel_t *ch);
-int adc_read(const adc_channel_t *ch, uint16_t *out);
+/*
+ * @p n on adc_init is the VADC module instance (Lite: 0).
+ * @p n on config/read is the logical channel (board_config group/channel).
+ */
+ulmk_tid_t adc_init(uint8_t n);
+int adc_config(uint8_t n);
+int adc_read(uint8_t n, uint16_t *out);
 
 #endif /* ADC_H */

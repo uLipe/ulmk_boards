@@ -16,7 +16,8 @@
 #include <stdint.h>
 #include "can_internal.h"
 #include "board_config.h"
-#include "drivers/common/illd_port.h"
+#include "pinmux_internal.h"
+#include "Port/Std/IfxPort.h"
 #include "IfxCan_reg.h"
 #include "Multican/Std/IfxMultican.h"
 
@@ -29,12 +30,24 @@
 #define CAN_MO_RX		1u
 #define CAN_BTR_500K		0x3EC9u
 
+struct can_board_cfg {
+	uint8_t tx_port;
+	uint8_t tx_pin;
+	uint8_t tx_alt;
+	uint8_t rx_port;
+	uint8_t rx_pin;
+	uint8_t rx_alti;
+	uint8_t nen_port;
+	uint8_t nen_pin;
+	uint8_t loopback;
+};
+
 typedef struct {
-	uint8_t      n;
-	can_cfg_t    cfg;
-	uint32_t     bitrate;
-	ulmk_ep_t    ep;
-	ulmk_notif_t irq_notif;
+	uint8_t             n;
+	struct can_board_cfg cfg;
+	uint32_t            bitrate;
+	ulmk_ep_t           ep;
+	ulmk_notif_t        irq_notif;
 } can_args_t;
 
 ulmk_ep_t g_can_eps[CAN_MAX];
@@ -73,55 +86,42 @@ static int panel_cmd(Ifx_CAN *mcan, uint32_t cmd, uint32_t arg2, uint32_t arg1)
 
 static void pin_nen_low(uint8_t port, uint8_t pin)
 {
+	pinmux_cfg_t cfg;
 	Ifx_P *p;
-	void *m;
 
 	if (port == 0xFFu)
 		return;
-	p = illd_port_module(port);
-	if (!p)
-		return;
-	m = ulmk_mem_map((void *)p, ILLD_PORT_MAP_SIZE,
-			 ULMK_PERM_READ | ULMK_PERM_WRITE, ULMK_MMAP_PERIPH);
-	if (!m)
-		return;
-	illd_port_set_mode((Ifx_P *)m, pin, IfxPort_Mode_outputPushPullGeneral);
-	((Ifx_P *)m)->OMR.U = (1u << (16u + (uint32_t)pin));
+	cfg.port  = port;
+	cfg.pin   = pin;
+	cfg.dir   = PINMUX_DIR_OUT;
+	cfg.pull  = PINMUX_PULL_NONE;
+	cfg.alt   = PINMUX_ALT_GPIO;
+	cfg.flags = 0u;
+	(void)pinmux_apply(&cfg);
+	p = pinmux_port(port);
+	if (p)
+		p->OMR.U = (1u << (16u + (uint32_t)pin));
 }
 
-static void pinmux(const can_cfg_t *cfg)
+static void pinmux_can(const struct can_board_cfg *cfg)
 {
-	Ifx_P *port;
-	void *m;
-	IfxPort_Mode mode;
+	pinmux_cfg_t pm;
 
-	port = illd_port_module(cfg->tx_port);
-	if (port) {
-		m = ulmk_mem_map((void *)port, ILLD_PORT_MAP_SIZE,
-				 ULMK_PERM_READ | ULMK_PERM_WRITE,
-				 ULMK_MMAP_PERIPH);
-		if (m) {
-			switch (cfg->tx_alt) {
-			case 4u:
-				mode = IfxPort_Mode_outputPushPullAlt4;
-				break;
-			case 5u:
-			default:
-				mode = IfxPort_Mode_outputPushPullAlt5;
-				break;
-			}
-			illd_port_set_mode((Ifx_P *)m, cfg->tx_pin, mode);
-		}
-	}
-	port = illd_port_module(cfg->rx_port);
-	if (port) {
-		m = ulmk_mem_map((void *)port, ILLD_PORT_MAP_SIZE,
-				 ULMK_PERM_READ | ULMK_PERM_WRITE,
-				 ULMK_MMAP_PERIPH);
-		if (m)
-			illd_port_set_mode((Ifx_P *)m, cfg->rx_pin,
-					   IfxPort_Mode_inputPullUp);
-	}
+	pm.port  = cfg->tx_port;
+	pm.pin   = cfg->tx_pin;
+	pm.dir   = PINMUX_DIR_OUT;
+	pm.pull  = PINMUX_PULL_NONE;
+	pm.alt   = cfg->tx_alt;
+	pm.flags = 0u;
+	(void)pinmux_apply(&pm);
+
+	pm.port  = cfg->rx_port;
+	pm.pin   = cfg->rx_pin;
+	pm.dir   = PINMUX_DIR_IN;
+	pm.pull  = PINMUX_PULL_UP;
+	pm.alt   = PINMUX_ALT_GPIO;
+	(void)pinmux_apply(&pm);
+
 	pin_nen_low(cfg->nen_port, cfg->nen_pin);
 }
 
@@ -193,7 +193,7 @@ static int mo_init_rx(Ifx_CAN_MO *mo, uint8_t list, uint32_t id)
 	return ULMK_OK;
 }
 
-static int hw_start(const can_cfg_t *cfg, uint32_t bitrate)
+static int hw_start(const struct can_board_cfg *cfg, uint32_t bitrate)
 {
 	Ifx_CAN_N *node_tx;
 	Ifx_CAN_N *node_rx;
@@ -203,7 +203,7 @@ static int hw_start(const can_cfg_t *cfg, uint32_t bitrate)
 	uint8_t list_rx;
 	int rc;
 
-	pinmux(cfg);
+	pinmux_can(cfg);
 
 	if (g_mcan->MCR.B.CLKSEL == 0u) {
 		g_mcan->MCR.B.CLKSEL = 0u;
@@ -419,7 +419,7 @@ static void can_server(void *arg)
 	}
 }
 
-ulmk_tid_t can_init(uint8_t n, const can_cfg_t *cfg, uint32_t bitrate)
+ulmk_tid_t can_init(uint8_t n, uint32_t bitrate, int loopback)
 {
 	ulmk_thread_attr_t attr = {0};
 	ulmk_ep_t ep;
@@ -427,7 +427,7 @@ ulmk_tid_t can_init(uint8_t n, const can_cfg_t *cfg, uint32_t bitrate)
 	ulmk_notif_t notif;
 	int ret;
 
-	if (n >= CAN_MAX || !cfg || g_can_eps[n] != ULMK_EP_INVALID)
+	if (n >= CAN_MAX || g_can_eps[n] != ULMK_EP_INVALID)
 		return ULMK_TID_INVALID;
 
 	ep = ulmk_ep_create();
@@ -440,7 +440,15 @@ ulmk_tid_t can_init(uint8_t n, const can_cfg_t *cfg, uint32_t bitrate)
 	}
 
 	g_args[n].n = n;
-	g_args[n].cfg = *cfg;
+	g_args[n].cfg.tx_port = ULMK_BOARD_CAN_TX_PORT;
+	g_args[n].cfg.tx_pin = ULMK_BOARD_CAN_TX_PIN;
+	g_args[n].cfg.tx_alt = ULMK_BOARD_CAN_TX_ALT;
+	g_args[n].cfg.rx_port = ULMK_BOARD_CAN_RX_PORT;
+	g_args[n].cfg.rx_pin = ULMK_BOARD_CAN_RX_PIN;
+	g_args[n].cfg.rx_alti = ULMK_BOARD_CAN_RX_ALTI;
+	g_args[n].cfg.nen_port = ULMK_BOARD_CAN_NEN_PORT;
+	g_args[n].cfg.nen_pin = ULMK_BOARD_CAN_NEN_PIN;
+	g_args[n].cfg.loopback = loopback ? 1u : 0u;
 	g_args[n].bitrate = bitrate ? bitrate : 500000u;
 	g_args[n].ep = ep;
 	g_args[n].irq_notif = notif;

@@ -1,11 +1,13 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * board_leds.c — Lite Kit LED1/LED2 (P00.5 / P00.6, active-low) via gpio driver.
+ * board_leds.c — Lite Kit LED1/LED2 (P00.5 / P00.6, active-low) via gpio.
  */
 #include <ulmk/microkernel.h>
 #include "board_config.h"
 #include "board_leds.h"
 #include <gpio.h>
+
+#define GPIO_N	0u
 
 static const uint16_t g_led_pin[BOARD_LED_COUNT] = {
 	GPIO_PIN(ULMK_BOARD_LED1_PORT, ULMK_BOARD_LED1_PIN),
@@ -18,11 +20,11 @@ int board_leds_init(void)
 	int rc;
 
 	for (i = 0u; i < BOARD_LED_COUNT; i++) {
-		rc = gpio_config(g_led_pin[i], GPIO_DIR_OUT, GPIO_PULL_NONE,
-				 GPIO_ALT_GENERAL);
+		rc = gpio_config(GPIO_N, g_led_pin[i], GPIO_DIR_OUT,
+				 GPIO_PULL_NONE);
 		if (rc != ULMK_OK)
 			return rc;
-		rc = gpio_set(g_led_pin[i], 1);
+		rc = gpio_set(GPIO_N, g_led_pin[i], 1);
 		if (rc != ULMK_OK)
 			return rc;
 	}
@@ -33,7 +35,7 @@ int board_leds_set(uint32_t led, int on)
 {
 	if (led >= BOARD_LED_COUNT)
 		return ULMK_EINVAL;
-	return gpio_set(g_led_pin[led], on ? 0 : 1);
+	return gpio_set(GPIO_N, g_led_pin[led], on ? 0 : 1);
 }
 
 int board_leds_get(uint32_t led, int *on)
@@ -43,7 +45,7 @@ int board_leds_get(uint32_t led, int *on)
 
 	if (led >= BOARD_LED_COUNT || !on)
 		return ULMK_EINVAL;
-	rc = gpio_get(g_led_pin[led], &level);
+	rc = gpio_get(GPIO_N, g_led_pin[led], &level);
 	if (rc != ULMK_OK)
 		return rc;
 	*on = level ? 0 : 1;

@@ -1,39 +1,35 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * i2c server — I2C0 master via iLLD SFR inlines (CLC/CLC1/FDIV in board_init).
+ * i2c server — I2C master via iLLD SFR inlines (CLC/FDIV in board_init).
  *
- * Protocol completion is IRQ-driven (SRC_I2C0P → notif).  Transfer timeout
- * uses STM0 CMP1 (independent of board_timer CMP0) so floating SDA/SCL without
- * pull-ups cannot hang the server forever — still no busy-loop.
+ * Self-contained: only the I2C module + its protocol SRC.  Completion is
+ * IRQ-driven (SRC_I2C0P → notif).  No STM / no transfer-timeout policy —
+ * that belongs in the application (e.g. board_i2c_scanner).
  */
 #include <ulmk/microkernel.h>
 #include <stdint.h>
 #include <stddef.h>
 #include "i2c_internal.h"
 #include "board_config.h"
-#include "drivers/common/illd_port.h"
+#include "pinmux_internal.h"
 #include "IfxI2c_reg.h"
 #include "I2c/Std/IfxI2c.h"
 
 #define I2C_STACK		1536u
 #define I2C_XFER_MAX		8u
+#define I2C_MAP_SIZE		0x100u
 #define I2C_NOTIF_PROTO		0u
-#define I2C_NOTIF_TO		1u
-#define I2C_XFER_TIMEOUT_US	5000u
 #define I2C_SRPN		ULMK_BOARD_IRQ_I2C0_P
-#define I2C_TO_SRPN		ULMK_BOARD_IRQ_STM0_CMP1
 #define I2C_SRC			ULMK_BOARD_SRC_I2C0_P
-#define I2C_TO_SRC		ULMK_BOARD_SRC_STM0_SR1
-
-#define STM0_TIM0_OFF		(0x010u / 4u)
-#define STM0_CMP1_OFF		(0x034u / 4u)
-#define STM0_CMCON_OFF		(0x038u / 4u)
-#define STM0_ICR_OFF		(0x03Cu / 4u)
-#define STM0_ISCR_OFF		(0x040u / 4u)
 
 typedef struct {
 	uint8_t    n;
-	i2c_pins_t pins;
+	uint8_t    scl_port;
+	uint8_t    scl_pin;
+	uint8_t    scl_alt;
+	uint8_t    sda_port;
+	uint8_t    sda_pin;
+	uint8_t    sda_alt;
 	uint32_t   bitrate;
 	ulmk_ep_t  ep;
 } i2c_args_t;
@@ -42,96 +38,29 @@ ulmk_ep_t g_i2c_eps[I2C_MAX];
 static i2c_args_t g_args[I2C_MAX] __attribute__((section(".user_bss")));
 static Ifx_I2C *g_i2c __attribute__((section(".user_bss")));
 static ulmk_notif_t g_irq_notif __attribute__((section(".user_bss")));
-static volatile uint32_t *g_stm0 __attribute__((section(".user_bss")));
 
-static IfxPort_Mode od_alt(uint8_t alt)
+static void pinmux_i2c(const i2c_args_t *a)
 {
-	switch (alt) {
-	case 5u:
-		return IfxPort_Mode_outputOpenDrainAlt5;
-	case 6u:
-	default:
-		return IfxPort_Mode_outputOpenDrainAlt6;
-	}
-}
+	pinmux_cfg_t cfg;
 
-static void pinmux(const i2c_pins_t *p)
-{
-	Ifx_P *port;
-	void *m;
+	cfg.port  = a->scl_port;
+	cfg.pin   = a->scl_pin;
+	cfg.dir   = PINMUX_DIR_OUT;
+	cfg.pull  = PINMUX_PULL_NONE;
+	cfg.alt   = a->scl_alt;
+	cfg.flags = PINMUX_F_OPENDRAIN;
+	(void)pinmux_apply(&cfg);
 
-	port = illd_port_module(p->scl_port);
-	if (port) {
-		m = ulmk_mem_map((void *)port, ILLD_PORT_MAP_SIZE,
-				 ULMK_PERM_READ | ULMK_PERM_WRITE,
-				 ULMK_MMAP_PERIPH);
-		if (m)
-			illd_port_set_mode((Ifx_P *)m, p->scl_pin,
-					   od_alt(p->scl_alt));
-	}
-	port = illd_port_module(p->sda_port);
-	if (port) {
-		m = ulmk_mem_map((void *)port, ILLD_PORT_MAP_SIZE,
-				 ULMK_PERM_READ | ULMK_PERM_WRITE,
-				 ULMK_MMAP_PERIPH);
-		if (m)
-			illd_port_set_mode((Ifx_P *)m, p->sda_pin,
-					   od_alt(p->sda_alt));
-	}
-}
-
-static uint32_t us_to_stm_ticks(uint32_t us)
-{
-	uint64_t ticks;
-
-	ticks = ((uint64_t)us * (uint64_t)ULMK_BOARD_FSTM_HZ) / 1000000u;
-	if (ticks == 0u)
-		ticks = 1u;
-	if (ticks > 0xFFFFFFFFu)
-		ticks = 0xFFFFFFFFu;
-	return (uint32_t)ticks;
-}
-
-static void to_arm(uint32_t us)
-{
-	uint32_t icr;
-	uint32_t now;
-	uint32_t delta;
-
-	if (!g_stm0)
-		return;
-
-	delta = us_to_stm_ticks(us);
-	/*
-	 * Keep CMP0EN (board_timer on SR0).  CMP1 → SR1 via CMP1OS=1 so the
-	 * I2C timeout notif is independent of the sleep timer.
-	 */
-	icr = g_stm0[STM0_ICR_OFF];
-	g_stm0[STM0_ICR_OFF] = icr & ~0x50u; /* CMP1EN|CMP1OS off */
-	g_stm0[STM0_ISCR_OFF] = 0x4u;        /* CMP1IRR */
-	now = g_stm0[STM0_TIM0_OFF];
-	g_stm0[STM0_CMP1_OFF] = now + delta;
-	/* CMP0EN preserved | CMP1EN | CMP1OS→SR1 */
-	g_stm0[STM0_ICR_OFF] = (icr & 0x1u) | 0x50u;
-}
-
-static void to_disarm(void)
-{
-	uint32_t icr;
-
-	if (!g_stm0)
-		return;
-	icr = g_stm0[STM0_ICR_OFF];
-	g_stm0[STM0_ICR_OFF] = icr & ~0x50u; /* CMP1EN|CMP1OS off */
-	g_stm0[STM0_ISCR_OFF] = 0x4u;
-	ulmk_irq_ack(I2C_TO_SRPN);
+	cfg.port  = a->sda_port;
+	cfg.pin   = a->sda_pin;
+	cfg.alt   = a->sda_alt;
+	(void)pinmux_apply(&cfg);
 }
 
 static int wait_protocol(Ifx_I2C *i2c)
 {
 	uint32_t pirq;
 	uint32_t bits;
-	uint32_t mask;
 	int ret;
 
 	pirq = i2c->PIRQSS.U;
@@ -143,21 +72,10 @@ static int wait_protocol(Ifx_I2C *i2c)
 	}
 
 	ulmk_irq_ack(I2C_SRPN);
-	to_arm(I2C_XFER_TIMEOUT_US);
-
-	mask = (1u << I2C_NOTIF_PROTO) | (1u << I2C_NOTIF_TO);
 	bits = 0u;
-	ret = ulmk_notif_wait(g_irq_notif, mask, &bits);
-	to_disarm();
+	ret = ulmk_notif_wait(g_irq_notif, 1u << I2C_NOTIF_PROTO, &bits);
 	ulmk_irq_ack(I2C_SRPN);
-
-	if (ret != ULMK_OK)
-		return ret;
-	if (bits & (1u << I2C_NOTIF_PROTO))
-		return ULMK_OK;
-	if (bits & (1u << I2C_NOTIF_TO))
-		return ULMK_ETIMEOUT;
-	return ULMK_ETIMEOUT;
+	return ret;
 }
 
 static void release_bus(Ifx_I2C *i2c)
@@ -179,7 +97,7 @@ static int master_write(Ifx_I2C *i2c, uint8_t addr8, const uint8_t *data,
 	if (IfxI2c_busIsFree(i2c) == FALSE) {
 		release_bus(i2c);
 		if (IfxI2c_busIsFree(i2c) == FALSE)
-			return ULMK_ETIMEOUT;
+			return ULMK_EDEADLK;
 	}
 
 	IfxI2c_clearAllProtocolInterruptSources(i2c);
@@ -271,7 +189,7 @@ static int master_read(Ifx_I2C *i2c, uint8_t addr8, uint8_t *data, size_t len)
 	if (IfxI2c_busIsFree(i2c) == FALSE) {
 		release_bus(i2c);
 		if (IfxI2c_busIsFree(i2c) == FALSE)
-			return ULMK_ETIMEOUT;
+			return ULMK_EDEADLK;
 	}
 
 	IfxI2c_clearAllProtocolInterruptSources(i2c);
@@ -310,10 +228,6 @@ static int master_read(Ifx_I2C *i2c, uint8_t addr8, uint8_t *data, size_t len)
 	if (len > 0u) {
 		uint32_t got = 0u;
 
-		/*
-		 * Wait for receive TX_END first — FIFO is then filled; drain
-		 * without spinning on FFSSTAT.
-		 */
 		rc = wait_protocol(i2c);
 		if (rc != ULMK_OK) {
 			release_bus(i2c);
@@ -334,7 +248,7 @@ static int master_read(Ifx_I2C *i2c, uint8_t addr8, uint8_t *data, size_t len)
 		}
 		if (got < len) {
 			release_bus(i2c);
-			return ULMK_ETIMEOUT;
+			return ULMK_EPERM;
 		}
 	}
 
@@ -342,12 +256,10 @@ static int master_read(Ifx_I2C *i2c, uint8_t addr8, uint8_t *data, size_t len)
 	return (int)len;
 }
 
-static int hw_start(const i2c_pins_t *pins, uint8_t pisel)
+static int hw_start(void)
 {
 	Ifx_I2C *i2c = g_i2c;
 
-	(void)pins;
-	(void)pisel; /* PISEL set once in ulmk_board_init() — GPCTL unsafe in IO=1 */
 	IfxI2c_stop(i2c);
 	i2c->ADDRCFG.U = 0u;
 	i2c->ADDRCFG.B.MnS = 1u;
@@ -403,15 +315,18 @@ static void i2c_server(void *arg)
 	uint8_t addr8;
 	size_t len;
 	int rc;
+	void *mapped;
 
-	/*
-	 * Absolute MODULE_I2C0 (static DPR 3 covers flash+MMIO).  Do not write
-	 * GPCTL here — that register stalls SPB from IO=1; PISEL is set in
-	 * ulmk_board_init().
-	 */
-	g_i2c = &MODULE_I2C0;
-	pinmux(&a->pins);
-	if (hw_start(&a->pins, a->pins.pisel) != ULMK_OK)
+	mapped = ulmk_mem_map((void *)(uintptr_t)ULMK_BOARD_I2C0_BASE,
+			      I2C_MAP_SIZE,
+			      ULMK_PERM_READ | ULMK_PERM_WRITE,
+			      ULMK_MMAP_PERIPH);
+	if (!mapped)
+		for (;;)
+			;
+	g_i2c = (Ifx_I2C *)mapped;
+	pinmux_i2c(a);
+	if (hw_start() != ULMK_OK)
 		for (;;)
 			;
 
@@ -443,14 +358,14 @@ static void i2c_server(void *arg)
 	}
 }
 
-ulmk_tid_t i2c_init(uint8_t n, const i2c_pins_t *pins, uint32_t bitrate_hz)
+ulmk_tid_t i2c_init(uint8_t n, uint32_t bitrate_hz)
 {
 	ulmk_thread_attr_t attr = {0};
 	ulmk_ep_t ep;
 	ulmk_tid_t tid;
 	int ret;
 
-	if (n >= I2C_MAX || !pins || g_i2c_eps[n] != ULMK_EP_INVALID)
+	if (n >= I2C_MAX || g_i2c_eps[n] != ULMK_EP_INVALID)
 		return ULMK_TID_INVALID;
 	if (n != 0u)
 		return ULMK_TID_INVALID;
@@ -465,16 +380,6 @@ ulmk_tid_t i2c_init(uint8_t n, const i2c_pins_t *pins, uint32_t bitrate_hz)
 		return ULMK_TID_INVALID;
 	}
 
-	g_stm0 = (volatile uint32_t *)ulmk_mem_map(
-		(void *)(uintptr_t)ULMK_BOARD_STM0_BASE, 0x100u,
-		ULMK_PERM_READ | ULMK_PERM_WRITE, ULMK_MMAP_PERIPH);
-	if (!g_stm0) {
-		ulmk_ep_destroy(ep);
-		return ULMK_TID_INVALID;
-	}
-	/* Ensure CMP1 compare size is 32-bit (board_timer only sets MSIZE0). */
-	g_stm0[STM0_CMCON_OFF] |= (0x1Fu << 16);
-
 	ret = ulmk_irq_bind_hw(I2C_SRPN, g_irq_notif, I2C_NOTIF_PROTO,
 			       (uintptr_t)I2C_SRC);
 	if (ret != ULMK_OK)
@@ -483,16 +388,13 @@ ulmk_tid_t i2c_init(uint8_t n, const i2c_pins_t *pins, uint32_t bitrate_hz)
 	if (ret != ULMK_OK)
 		return ULMK_TID_INVALID;
 
-	ret = ulmk_irq_bind_hw(I2C_TO_SRPN, g_irq_notif, I2C_NOTIF_TO,
-			       (uintptr_t)I2C_TO_SRC);
-	if (ret != ULMK_OK)
-		return ULMK_TID_INVALID;
-	ret = ulmk_irq_enable(I2C_TO_SRPN);
-	if (ret != ULMK_OK)
-		return ULMK_TID_INVALID;
-
 	g_args[n].n = n;
-	g_args[n].pins = *pins;
+	g_args[n].scl_port = ULMK_BOARD_I2C0_SCL_PORT;
+	g_args[n].scl_pin = ULMK_BOARD_I2C0_SCL_PIN;
+	g_args[n].scl_alt = ULMK_BOARD_I2C0_SCL_ALT;
+	g_args[n].sda_port = ULMK_BOARD_I2C0_SDA_PORT;
+	g_args[n].sda_pin = ULMK_BOARD_I2C0_SDA_PIN;
+	g_args[n].sda_alt = ULMK_BOARD_I2C0_SDA_ALT;
 	g_args[n].bitrate = bitrate_hz ? bitrate_hz : 100000u;
 	g_args[n].ep = ep;
 	attr.name = "i2c";

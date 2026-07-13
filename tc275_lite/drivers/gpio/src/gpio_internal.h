@@ -10,6 +10,6 @@
 #define GPIO_MSG_GET		3u
 #define GPIO_MSG_SUBSCRIBE	4u
 
-extern ulmk_ep_t g_gpio_ep;
+extern ulmk_ep_t g_gpio_eps[GPIO_MAX];
 
 #endif /* GPIO_INTERNAL_H */

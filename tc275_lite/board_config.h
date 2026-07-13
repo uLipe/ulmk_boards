@@ -41,7 +41,7 @@
 #define ULMK_BOARD_IRQ_VADC_G0		5u
 #define ULMK_BOARD_IRQ_CAN0		6u
 #define ULMK_BOARD_IRQ_I2C0_P		7u
-#define ULMK_BOARD_IRQ_STM0_CMP1	8u	/* I2C xfer timeout (CMP1) */
+/* SRPN 8 free (was STM0 CMP1 I2C timeout — policy moved to apps) */
 #define ULMK_BOARD_IRQ_GPIO_ERU		9u	/* SCU ERU0 */
 
 /* ── Timer peripheral (STM0, Core 0) — IfxStm_reg.h MODULE_STM0 ─────────── */
@@ -50,18 +50,38 @@
 /* fSTM follows fSPB; with PLL@200 MHz and SPB div=2 → 100 MHz. */
 #define ULMK_BOARD_FSTM_HZ		100000000u
 
+/* ── Driver instance limits (n = 0 .. MAX-1) ───────────────────────────── */
+
+#define ULMK_BOARD_PINMUX_MAX		1u
+#define ULMK_BOARD_GPIO_MAX		1u
+#define ULMK_BOARD_ASCLIN_MAX		1u	/* ASCLIN0 console */
+#define ULMK_BOARD_I2C_MAX		1u	/* I2C0 */
+#define ULMK_BOARD_CAN_MAX		1u	/* MultiCAN node 0 */
+#define ULMK_BOARD_ADC_MAX		1u	/* logical channels (pot) */
+#define ULMK_BOARD_PWM_MAX		2u	/* TOM channels → LED1/LED2 */
+
 /* ── ASCLIN0 (USB virtual COM on Lite Kit) ─────────────────────────────── */
 
 #define ULMK_BOARD_ASCLIN0_BASE		0xF0000600u
 #define ULMK_BOARD_CONSOLE_BAUD		115200u
+#define ULMK_BOARD_ASCLIN0_TX_PORT	14u
+#define ULMK_BOARD_ASCLIN0_TX_PIN	0u
+#define ULMK_BOARD_ASCLIN0_TX_ALT	2u
+#define ULMK_BOARD_ASCLIN0_RX_PORT	14u
+#define ULMK_BOARD_ASCLIN0_RX_PIN	1u
+#define ULMK_BOARD_ASCLIN0_RX_ALTI	0u
 
 /* ── Lite Kit peripherals (thin userspace drivers) ─────────────────────── */
 
 #define ULMK_BOARD_VADC_BASE		0xF0020000u
 /* Lite Kit pot on AN0 → VADC G0CH0; VAREF = VDDM = 3.3 V. */
 #define ULMK_BOARD_VADC_VAREF_MV	3300u
-#define ULMK_BOARD_ADC_POT_GROUP	0u
-#define ULMK_BOARD_ADC_POT_CHANNEL	0u
+#define ULMK_BOARD_ADC0_GROUP		0u
+#define ULMK_BOARD_ADC0_CHANNEL		0u
+/* Compat aliases for older demos. */
+#define ULMK_BOARD_ADC_POT_GROUP	ULMK_BOARD_ADC0_GROUP
+#define ULMK_BOARD_ADC_POT_CHANNEL	ULMK_BOARD_ADC0_CHANNEL
+
 #define ULMK_BOARD_I2C0_BASE		0xF00C0000u
 /*
  * Lite Kit I2C0 (X1 header + Shield2Go/Arduino share the same module):
@@ -86,8 +106,10 @@
  */
 #define ULMK_BOARD_CAN_TX_PORT		20u
 #define ULMK_BOARD_CAN_TX_PIN		8u
+#define ULMK_BOARD_CAN_TX_ALT		5u
 #define ULMK_BOARD_CAN_RX_PORT		20u
 #define ULMK_BOARD_CAN_RX_PIN		7u
+#define ULMK_BOARD_CAN_RX_ALTI		1u	/* RXSEL = b */
 #define ULMK_BOARD_CAN_NEN_PORT		20u
 #define ULMK_BOARD_CAN_NEN_PIN		6u
 #define ULMK_BOARD_GTM_BASE		0xF0100000u
@@ -99,9 +121,19 @@
 
 /*
  * Lite Kit LEDs ← GTM TOM0 (active-low, port alt1):
- *   LED1 P00.5 ← TOM0_CH12 / TOUT14 / ToutSel_a
- *   LED2 P00.6 ← TOM0_CH13 / TOUT15 / ToutSel_a
+ *   PWM0 / LED1 P00.5 ← TOM0_CH12 / TOUT14 / ToutSel_a
+ *   PWM1 / LED2 P00.6 ← TOM0_CH13 / TOUT15 / ToutSel_a
  */
+#define ULMK_BOARD_PWM0_PORT		0u
+#define ULMK_BOARD_PWM0_PIN		5u
+#define ULMK_BOARD_PWM0_ALT		1u
+#define ULMK_BOARD_PWM0_TOM_CH		12u
+#define ULMK_BOARD_PWM0_TOUT		14u
+#define ULMK_BOARD_PWM1_PORT		0u
+#define ULMK_BOARD_PWM1_PIN		6u
+#define ULMK_BOARD_PWM1_ALT		1u
+#define ULMK_BOARD_PWM1_TOM_CH		13u
+#define ULMK_BOARD_PWM1_TOUT		15u
 
 /* LED1 P00.5, LED2 P00.6 (active-low); Button1 P00.7; pot AN0. */
 #define ULMK_BOARD_LED1_PORT		0u
