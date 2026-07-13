@@ -250,20 +250,18 @@ python3 tools/dev.py build --board ../ulmk_boards/tc275_lite \
   --no-components --component board_pwm_led
 ```
 
-### GPIO button → LED (IRQ notify)
+### GPIO button poll → toggle LEDs
 
 ```bash
 python3 tools/dev.py build --board ../ulmk_boards/tc275_lite \
   --no-components --component gpio_led_notify
-../ulmk_boards/tc275_lite/scripts/hil-board-gpio-led-notify.sh \
-  ../build/ulipe-tricore-tc275_lite/ulmk
 ```
 
-`gpio_subscribe()` registers a notification and returns immediately.  The GPIO
-server owns `ulmk_irq_bind_hw` on **GTM TIM2 CH6** (Button1 **P00.7**); on IRQ
-it defers by signaling every matching subscriber.  The demo also calls
-`gpio_irq_kick()` once after ready so HIL can check the defer path without a
-physical press; pressing Button1 keeps driving the same path.
+Polls Button1 (**P00.7**, no ERU REQ) via `gpio_get()` + `board_timer_sleep_us()`.
+On press, toggles LED1/LED2 (one on, the other off).
+
+`gpio_subscribe()` is separate: pins with an **SCU ERU** REQ (e.g. **P00.4** /
+REQ7) get edge IRQs from the GPIO IRQ thread (`SRC_SCUERU0` / EIFR).
 
 ## Hardware notes
 

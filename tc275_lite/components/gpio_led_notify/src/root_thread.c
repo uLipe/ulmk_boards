@@ -1,12 +1,10 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * gpio_led_notify — turn LED1 on when Button1 (P00.7) is pressed.
+ * gpio_led_notify — poll Button1 (P00.7) and toggle LED1/LED2.
  *
- * Demonstrates IRQ-driven gpio_subscribe(): register a notification, return
- * immediately, then wait for the deferred signal from the GPIO IRQ server.
- *
- * A gpio_irq_kick() after ready exercises the same defer path as the TIM IRQ
- * (automated HIL).  Further events come from Button1 via GTM TIM2 CH6.
+ * Button1 has no SCU ERU REQ, so this demo polls via gpio_get() and
+ * board_timer_sleep_us().  Exercises GPIO input + output; ERU subscribe
+ * is separate (pins like P00.4 / REQ7).
  */
 
 #include <stdint.h>
@@ -18,22 +16,25 @@
 
 void board_services_init(const ulmk_boot_info_t *info);
 void board_console_puts(const char *s);
+void board_timer_sleep_us(uint32_t us);
 
-#define BTN_PIN	GPIO_PIN(ULMK_BOARD_BUTTON_PORT, ULMK_BOARD_BUTTON_PIN)
-#define BTN_BIT	0u
+#define BTN_PIN		GPIO_PIN(ULMK_BOARD_BUTTON_PORT, ULMK_BOARD_BUTTON_PIN)
+#define POLL_US		20000u	/* 20 ms */
 
 void ulmk_root_thread(const ulmk_boot_info_t *info)
 {
-	ulmk_notif_t n;
-	uint32_t bits;
+	int level;
+	int prev;
+	int led1_on;
 	int rc;
 
 	board_services_init(info);
 
 	board_console_puts("\r\n");
-	board_console_puts("ulmk: gpio_led_notify - Button1 -> LED1\r\n");
+	board_console_puts("ulmk: gpio_led_notify - poll Button1, toggle LEDs\r\n");
 
-	(void)board_leds_set(BOARD_LED_1, 0);
+	led1_on = 1;
+	(void)board_leds_set(BOARD_LED_1, 1);
 	(void)board_leds_set(BOARD_LED_2, 0);
 
 	rc = gpio_config(BTN_PIN, GPIO_DIR_IN, GPIO_PULL_UP, GPIO_ALT_GENERAL);
@@ -42,33 +43,28 @@ void ulmk_root_thread(const ulmk_boot_info_t *info)
 		ulmk_thread_exit();
 	}
 
-	n = ulmk_notif_create();
-	if (n == ULMK_NOTIF_INVALID) {
-		board_console_puts("notif_create failed\r\n");
-		ulmk_thread_exit();
-	}
-
-	rc = gpio_subscribe(BTN_PIN, GPIO_EVT_FALLING, n, BTN_BIT);
-	if (rc != ULMK_OK) {
-		board_console_puts("gpio_subscribe failed\r\n");
-		ulmk_thread_exit();
-	}
+	prev = 1; /* released (active-low) */
+	(void)gpio_get(BTN_PIN, &prev);
 
 	board_console_puts("gpio_led_notify: ready (press Button1)\r\n");
 
-	/* Same defer path the TIM IRQ uses — validates subscribe without SETR. */
-	rc = gpio_irq_kick();
-	if (rc != ULMK_OK) {
-		board_console_puts("gpio_irq_kick failed\r\n");
-		ulmk_thread_exit();
-	}
-
 	for (;;) {
-		bits = 0u;
-		rc = ulmk_notif_wait(n, 1u << BTN_BIT, &bits);
+		board_timer_sleep_us(POLL_US);
+		rc = gpio_get(BTN_PIN, &level);
 		if (rc != ULMK_OK)
 			continue;
-		(void)board_leds_set(BOARD_LED_1, 1);
-		board_console_puts("gpio_led_notify: LED1 on\r\n");
+		/* Falling edge: released (1) → pressed (0). */
+		if (prev != 0 && level == 0) {
+			led1_on = !led1_on;
+			(void)board_leds_set(BOARD_LED_1, led1_on);
+			(void)board_leds_set(BOARD_LED_2, !led1_on);
+			if (led1_on)
+				board_console_puts(
+					"gpio_led_notify: LED1 on LED2 off\r\n");
+			else
+				board_console_puts(
+					"gpio_led_notify: LED1 off LED2 on\r\n");
+		}
+		prev = level;
 	}
 }
