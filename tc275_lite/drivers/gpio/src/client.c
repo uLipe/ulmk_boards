@@ -75,3 +75,19 @@ int gpio_subscribe(uint16_t pin, uint32_t edge, ulmk_notif_t n, uint32_t bit)
 		return rc;
 	return (int)(int32_t)msg.words[0];
 }
+
+int gpio_irq_kick(void)
+{
+	ulmk_msg_t msg;
+	int rc;
+
+	msg.label    = GPIO_MSG_IRQ_KICK;
+	msg.words[0] = 0u;
+	msg.words[1] = 0u;
+	msg.words[2] = 0u;
+	msg.words[3] = 0u;
+	rc = gpio_call(&msg);
+	if (rc != ULMK_OK)
+		return rc;
+	return (int)(int32_t)msg.words[0];
+}

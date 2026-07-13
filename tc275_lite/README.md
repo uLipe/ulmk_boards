@@ -250,6 +250,21 @@ python3 tools/dev.py build --board ../ulmk_boards/tc275_lite \
   --no-components --component board_pwm_led
 ```
 
+### GPIO button → LED (IRQ notify)
+
+```bash
+python3 tools/dev.py build --board ../ulmk_boards/tc275_lite \
+  --no-components --component gpio_led_notify
+../ulmk_boards/tc275_lite/scripts/hil-board-gpio-led-notify.sh \
+  ../build/ulipe-tricore-tc275_lite/ulmk
+```
+
+`gpio_subscribe()` registers a notification and returns immediately.  The GPIO
+server owns `ulmk_irq_bind_hw` on **GTM TIM2 CH6** (Button1 **P00.7**); on IRQ
+it defers by signaling every matching subscriber.  The demo also calls
+`gpio_irq_kick()` once after ready so HIL can check the defer path without a
+physical press; pressing Button1 keeps driving the same path.
+
 ## Hardware notes
 
 - **Crystal:** 20 MHz → **200 MHz** CPU (`ULMK_BOARD_FCPU_HZ`); STM @ **100 MHz** (`ULMK_BOARD_FSTM_HZ`).

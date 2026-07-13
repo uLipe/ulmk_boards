@@ -9,6 +9,7 @@
 #define GPIO_MSG_SET		2u
 #define GPIO_MSG_GET		3u
 #define GPIO_MSG_SUBSCRIBE	4u
+#define GPIO_MSG_IRQ_KICK	5u
 
 extern ulmk_ep_t g_gpio_ep;
 
