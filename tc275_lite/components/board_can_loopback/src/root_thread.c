@@ -72,7 +72,6 @@ static void print_frame(const char *tag, const can_frame_t *f)
 void ulmk_root_thread(const ulmk_boot_info_t *info)
 {
 	ulmk_tid_t tid;
-	can_cfg_t cfg;
 	can_frame_t tx;
 	can_frame_t rx;
 	uint32_t seq;
@@ -80,17 +79,7 @@ void ulmk_root_thread(const ulmk_boot_info_t *info)
 
 	board_services_init(info);
 
-	cfg.tx_port = ULMK_BOARD_CAN_TX_PORT;
-	cfg.tx_pin = ULMK_BOARD_CAN_TX_PIN;
-	cfg.tx_alt = 5u;
-	cfg.rx_port = ULMK_BOARD_CAN_RX_PORT;
-	cfg.rx_pin = ULMK_BOARD_CAN_RX_PIN;
-	cfg.rx_alti = 1u; /* RXSEL = b → RXD0B */
-	cfg.nen_port = ULMK_BOARD_CAN_NEN_PORT;
-	cfg.nen_pin = ULMK_BOARD_CAN_NEN_PIN;
-	cfg.loopback = 1u;
-
-	tid = can_init(CAN_NODE, &cfg, CAN_BITRATE);
+	tid = can_init(CAN_NODE, CAN_BITRATE, 1);
 	if (tid == ULMK_TID_INVALID) {
 		board_console_puts("can_init failed\r\n");
 		ulmk_thread_exit();

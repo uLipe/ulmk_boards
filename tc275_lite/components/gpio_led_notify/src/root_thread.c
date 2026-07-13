@@ -1,10 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /*
  * gpio_led_notify — poll Button1 (P00.7) and toggle LED1/LED2.
- *
- * Button1 has no SCU ERU REQ, so this demo polls via gpio_get() and
- * board_timer_sleep_us().  Exercises GPIO input + output; ERU subscribe
- * is separate (pins like P00.4 / REQ7).
  */
 
 #include <stdint.h>
@@ -18,8 +14,9 @@ void board_services_init(const ulmk_boot_info_t *info);
 void board_console_puts(const char *s);
 void board_timer_sleep_us(uint32_t us);
 
+#define GPIO_N		0u
 #define BTN_PIN		GPIO_PIN(ULMK_BOARD_BUTTON_PORT, ULMK_BOARD_BUTTON_PIN)
-#define POLL_US		20000u	/* 20 ms */
+#define POLL_US		20000u
 
 void ulmk_root_thread(const ulmk_boot_info_t *info)
 {
@@ -37,23 +34,22 @@ void ulmk_root_thread(const ulmk_boot_info_t *info)
 	(void)board_leds_set(BOARD_LED_1, 1);
 	(void)board_leds_set(BOARD_LED_2, 0);
 
-	rc = gpio_config(BTN_PIN, GPIO_DIR_IN, GPIO_PULL_UP, GPIO_ALT_GENERAL);
+	rc = gpio_config(GPIO_N, BTN_PIN, GPIO_DIR_IN, GPIO_PULL_UP);
 	if (rc != ULMK_OK) {
 		board_console_puts("gpio_config(button) failed\r\n");
 		ulmk_thread_exit();
 	}
 
-	prev = 1; /* released (active-low) */
-	(void)gpio_get(BTN_PIN, &prev);
+	prev = 1;
+	(void)gpio_get(GPIO_N, BTN_PIN, &prev);
 
 	board_console_puts("gpio_led_notify: ready (press Button1)\r\n");
 
 	for (;;) {
 		board_timer_sleep_us(POLL_US);
-		rc = gpio_get(BTN_PIN, &level);
+		rc = gpio_get(GPIO_N, BTN_PIN, &level);
 		if (rc != ULMK_OK)
 			continue;
-		/* Falling edge: released (1) → pressed (0). */
 		if (prev != 0 && level == 0) {
 			led1_on = !led1_on;
 			(void)board_leds_set(BOARD_LED_1, led1_on);

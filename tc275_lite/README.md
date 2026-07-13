@@ -195,7 +195,11 @@ Open a serial terminal on the **USB COM port** (115200 8N1) to see
 | 4 | I2C0 master + `board_i2c_scanner` — done |
 
 `board_services_init()` starts console + timer + gpio + leds.
-Apps call `i2c_init` / `adc_init` / `can_init` / `pwm_init` when needed.
+Apps call `i2c_init(n, bitrate)` / `adc_init(0)` / `can_init(n, bitrate, loopback)` /
+`pwm_init(0)` when needed.  Pin alt functions live in `board_config.h` and are
+applied by each driver via the public **pinmux** driver (`pinmux_init` /
+`pinmux_config`); apps do not pass alt numbers.
+
 
 Board-local demos live under `components/` (scanned via `ULMK_CHIP_DIR`):
 

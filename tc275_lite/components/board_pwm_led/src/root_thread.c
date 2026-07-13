@@ -1,8 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /*
  * board_pwm_led — fade LED1/LED2 with GTM TOM PWM (active-low).
- *
- * Hardware PWM at 1 kHz; fade steps sleep via board_timer (IRQ+notif).
  */
 
 #include <stdint.h>
@@ -16,11 +14,12 @@ void board_console_puts(const char *s);
 void board_console_putc(char c);
 void board_timer_sleep_us(uint32_t us);
 
+#define PWM_MOD			0u
 #define PWM_CH_LED1		0u
 #define PWM_CH_LED2		1u
 #define PWM_FREQ_HZ		1000u
 #define FADE_STEPS		80u
-#define FADE_STEP_US		50000u	/* 80 × 50 ms ≈ 4 s per ramp */
+#define FADE_STEP_US		50000u
 
 static void put_u32(uint32_t v)
 {
@@ -63,31 +62,21 @@ static void fade_pair(uint32_t from, uint32_t to)
 void ulmk_root_thread(const ulmk_boot_info_t *info)
 {
 	ulmk_tid_t tid;
-	pwm_pin_t pin;
 	uint32_t round;
 
 	board_services_init(info);
 
-	tid = pwm_init();
+	tid = pwm_init(PWM_MOD);
 	if (tid == ULMK_TID_INVALID) {
 		board_console_puts("pwm_init failed\r\n");
 		ulmk_thread_exit();
 	}
 
-	pin.port = ULMK_BOARD_LED1_PORT;
-	pin.pin = ULMK_BOARD_LED1_PIN;
-	pin.alt = 1u;
-	pin.tom_ch = 12u;
-	if (pwm_config(PWM_CH_LED1, &pin, PWM_FREQ_HZ, 0u) != ULMK_OK) {
+	if (pwm_config(PWM_CH_LED1, PWM_FREQ_HZ, 0u) != ULMK_OK) {
 		board_console_puts("pwm_config LED1 failed\r\n");
 		ulmk_thread_exit();
 	}
-
-	pin.port = ULMK_BOARD_LED2_PORT;
-	pin.pin = ULMK_BOARD_LED2_PIN;
-	pin.alt = 1u;
-	pin.tom_ch = 13u;
-	if (pwm_config(PWM_CH_LED2, &pin, PWM_FREQ_HZ, 1000u) != ULMK_OK) {
+	if (pwm_config(PWM_CH_LED2, PWM_FREQ_HZ, 1000u) != ULMK_OK) {
 		board_console_puts("pwm_config LED2 failed\r\n");
 		ulmk_thread_exit();
 	}
