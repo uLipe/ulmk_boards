@@ -36,7 +36,7 @@ set(ULMK_BOARD_ILLD_INCLUDES
 	"${_ILLD_BS}/Service/CpuGeneric"
 )
 
-# Optional const pin-map tables (no EndInit / no mfcr).  Safe in userspace.
+# Optional iLLD units safe in userspace (no EndInit / no mfcr).
 set(ULMK_BOARD_ILLD_SOURCES "")
 foreach(_pm IN ITEMS
 	"${_ILLD_TC}/_PinMap/IfxAsclin_PinMap.c"
@@ -44,7 +44,8 @@ foreach(_pm IN ITEMS
 	"${_ILLD_TC}/_PinMap/IfxVadc_PinMap.c"
 	"${_ILLD_TC}/_PinMap/IfxMultican_PinMap.c"
 	"${_ILLD_TC}/_PinMap/IfxGtm_PinMap.c"
-	"${_ILLD_TC}/_PinMap/IfxPort_PinMap.c")
+	"${_ILLD_TC}/_PinMap/IfxPort_PinMap.c"
+	"${_ILLD_TC}/Scu/Std/IfxScuEru.c")
 	if(EXISTS "${_pm}")
 		list(APPEND ULMK_BOARD_ILLD_SOURCES "${_pm}")
 	endif()

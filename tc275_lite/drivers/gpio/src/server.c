@@ -1,44 +1,36 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * gpio server — PORT access via iLLD SFR / IfxPort inlines.
+ * gpio server — PORT via iLLD SFR / IfxPort inlines.
  *
- * Subscribe is non-blocking: ep_call registers (notif, bit) and returns.
- * Edge IRQs come from GTM TIM (Lite Kit Button1 P00.7 → TIM2 CH6).  The
- * server waits on ep_recv_or_notif; on IRQ it defers by signaling every
- * matching subscriber — no pin polling.
+ * Two threads:
+ *   gpio_ipc — ep_recv for config / set / get / subscribe
+ *   gpio_irq — notif_wait on SCU ERU0; read EIFR, clear flags, defer notifs
+ *
+ * Subscribe only succeeds for pins with an ERU REQ mux (see eru_pins[]).
+ * Button1 (P00.7) has no ERU — poll it from a demo app, not here.
  */
 #include <ulmk/microkernel.h>
 #include <stdint.h>
 #include "gpio_internal.h"
 #include "board_config.h"
 #include "drivers/common/illd_port.h"
-#include "IfxGtm_reg.h"
-#include "IfxGtm_bf.h"
-#include "Gtm/Std/IfxGtm_Tim.h"
+#include "Scu/Std/IfxScuEru.h"
 
-#define GPIO_STACK_SIZE	1536u
-#define GPIO_MAX_SUBS	4u
-#define GPIO_PORT_SLOTS	8u
-#define GPIO_IRQ_BIT	0u
-#define GPIO_SRPN	ULMK_BOARD_IRQ_GPIO_BTN
-#define GPIO_SRC	ULMK_BOARD_SRC_GTM_TIM2_6
-
-/* Lite Kit Button1 — only IRQ-capable subscribe pin for now. */
-#define GPIO_BTN_ENC \
-	GPIO_PIN(ULMK_BOARD_BUTTON_PORT, ULMK_BOARD_BUTTON_PIN)
-
-#define GPIO_TIM_IDX		2u
-#define GPIO_TIM_CH		6u
-#define GPIO_TIM_TIN_SEL	1u	/* TIN16 */
-#define GPIO_CMU_MAP_SIZE	0x100u
-#define GPIO_GTM_CMU_BASE	ULMK_BOARD_GTM_CMU_BASE
+#define GPIO_STACK_SIZE		1536u
+#define GPIO_MAX_SUBS		4u
+#define GPIO_PORT_SLOTS		8u
+#define GPIO_IRQ_BIT		0u
+#define GPIO_SRPN		ULMK_BOARD_IRQ_GPIO_ERU
+#define GPIO_SRC		ULMK_BOARD_SRC_SCU_ERU0
+#define GPIO_SCU_ERU_BASE	0xF0036210u
+#define GPIO_SCU_ERU_SIZE	0x40u
+#define GPIO_ERU_CH_MAX		8u
 
 struct gpio_sub {
 	uint16_t     pin;
 	uint32_t     edge;
 	ulmk_notif_t notif;
 	uint32_t     bit;
-	int          last;
 	int          active;
 };
 
@@ -48,15 +40,46 @@ struct port_slot {
 	int     used;
 };
 
+/* ERU REQ pinmux (from IfxScu_PinMap) — channel + EISEL (RxSel). */
+struct eru_pin {
+	uint8_t port;
+	uint8_t pin;
+	uint8_t ch;
+	uint8_t sel;
+};
+
+static const struct eru_pin eru_pins[] = {
+	{ 15u,  4u, 0u, 0u }, /* REQ0  P15.4  */
+	{ 10u,  7u, 0u, 2u }, /* REQ4  P10.7  */
+	{ 14u,  3u, 1u, 0u }, /* REQ10 P14.3  */
+	{ 10u,  8u, 1u, 2u }, /* REQ5  P10.8  */
+	{ 10u,  2u, 2u, 0u }, /* REQ2  P10.2  */
+	{  2u,  1u, 2u, 1u }, /* REQ14 P02.1  */
+	{  0u,  4u, 2u, 2u }, /* REQ7  P00.4  */
+	{ 10u,  3u, 3u, 0u }, /* REQ3  P10.3  */
+	{ 14u,  1u, 3u, 1u }, /* REQ15 P14.1  */
+	{  2u,  0u, 3u, 2u }, /* REQ6  P02.0  */
+	{ 33u,  7u, 4u, 0u }, /* REQ8  P33.7  */
+	{ 15u,  5u, 4u, 3u }, /* REQ13 P15.5  */
+	{ 15u,  8u, 5u, 0u }, /* REQ1  P15.8  */
+	{ 20u,  0u, 6u, 0u }, /* REQ9  P20.0  */
+	{ 11u, 10u, 6u, 3u }, /* REQ12 P11.10 */
+	{ 20u,  9u, 7u, 0u }, /* REQ11 P20.9  */
+	{ 15u,  1u, 7u, 2u }, /* REQ16 P15.1  */
+};
+
 static struct gpio_sub g_subs[GPIO_MAX_SUBS]
 	__attribute__((section(".user_bss")));
 static struct port_slot g_ports[GPIO_PORT_SLOTS]
 	__attribute__((section(".user_bss")));
+/* Encoded pin currently armed on each ERU channel. */
+static uint16_t g_eru_enc[GPIO_ERU_CH_MAX]
+	__attribute__((section(".user_bss")));
+static uint8_t g_eru_armed_mask __attribute__((section(".user_bss")));
+static uint8_t g_ogu0_armed __attribute__((section(".user_bss")));
+
 ulmk_ep_t g_gpio_ep;
 static ulmk_notif_t g_irq_notif __attribute__((section(".user_bss")));
-static Ifx_GTM_TIM_CH *g_tim_ch __attribute__((section(".user_bss")));
-static uint8_t g_tim_armed __attribute__((section(".user_bss")));
-static volatile uint32_t *g_cmu_clk_en __attribute__((section(".user_bss")));
 
 static Ifx_P *map_port(uint8_t port)
 {
@@ -157,133 +180,80 @@ static int do_get(uint16_t enc, int *value)
 	return ULMK_OK;
 }
 
-static void tim_ack(void)
+static const struct eru_pin *eru_lookup(uint16_t enc)
 {
-	if (g_tim_ch) {
-		g_tim_ch->IRQ_NOTIFY.U =
-			1u << IFX_GTM_TIM_CH_IRQ_NOTIFY_NEWVAL_OFF;
+	uint8_t port = (uint8_t)(enc >> 8);
+	uint8_t pin = (uint8_t)(enc & 0xFFu);
+	uint32_t i;
+
+	for (i = 0u; i < (uint32_t)(sizeof(eru_pins) / sizeof(eru_pins[0]));
+	     i++) {
+		if (eru_pins[i].port == port && eru_pins[i].pin == pin)
+			return &eru_pins[i];
 	}
-	ulmk_irq_ack(GPIO_SRPN);
-}
-
-static int tim_arm(uint32_t edge)
-{
-	Ifx_GTM_TIM_CH *ch;
-	uint32_t shift;
-	uint32_t mask;
-	uint32_t val;
-	uint32_t stride;
-
-	if (g_tim_armed)
-		return ULMK_OK;
-
-	if (!g_cmu_clk_en) {
-		g_cmu_clk_en = (volatile uint32_t *)ulmk_mem_map(
-			(void *)(uintptr_t)GPIO_GTM_CMU_BASE, GPIO_CMU_MAP_SIZE,
-			ULMK_PERM_READ | ULMK_PERM_WRITE, ULMK_MMAP_PERIPH);
-		if (!g_cmu_clk_en)
-			return ULMK_ENOMEM;
-	}
-	/* GCLK = cluster clock; enable CMU CLK0 for TIM capture. */
-	g_cmu_clk_en[1] = 1u; /* GCLK_NUM @ +0x4 */
-	g_cmu_clk_en[2] = 1u; /* GCLK_DEN @ +0x8 */
-	g_cmu_clk_en[0] = 0x00000002u; /* IFXGTM_CMU_CLKEN_CLK0 */
-
-	/* TIM2 INSEL CH6 ← TIN16 (select=1). */
-	shift = GPIO_TIM_CH * 4u;
-	mask = 0xFu << shift;
-	val = (uint32_t)GPIO_TIM_TIN_SEL << shift;
-	GTM_INOUTSEL_TIM2_INSEL.U =
-		(GTM_INOUTSEL_TIM2_INSEL.U & ~mask) | val;
-
-	ch = IfxGtm_Tim_getChannel(&MODULE_GTM.TIM[GPIO_TIM_IDX],
-				   (IfxGtm_Tim_Ch)GPIO_TIM_CH);
-	g_tim_ch = ch;
-
-	ch->CTRL.U = 0u;
-	ch->CTRL.B.TIM_MODE = IfxGtm_Tim_Mode_inputEvent;
-	ch->CTRL.B.CLK_SEL = 0u; /* CMU CLK0 */
-	if (edge == GPIO_EVT_BOTH) {
-		ch->CTRL.B.ISL = 1u;
-		ch->CTRL.B.DSL = 0u;
-	} else if (edge == GPIO_EVT_RISING) {
-		ch->CTRL.B.ISL = 0u;
-		ch->CTRL.B.DSL = 1u;
-	} else {
-		/* falling (active-low button press) */
-		ch->CTRL.B.ISL = 0u;
-		ch->CTRL.B.DSL = 0u;
-	}
-	ch->CTRL.B.CICTRL = 0u; /* current channel */
-	ch->CTRL.B.CNTS_SEL = 0u;
-	ch->CTRL.B.GPR0_SEL = 0u;
-	ch->CTRL.B.GPR1_SEL = 0u;
-
-	stride = IFX_GTM_TIM_IN_SRC_MODE_1_OFF - IFX_GTM_TIM_IN_SRC_MODE_0_OFF;
-	MODULE_GTM.TIM[GPIO_TIM_IDX].IN_SRC.U =
-		1u << (IFX_GTM_TIM_IN_SRC_MODE_0_OFF + GPIO_TIM_CH * stride);
-	MODULE_GTM.TIM[GPIO_TIM_IDX].IN_SRC.U =
-		1u << (IFX_GTM_TIM_IN_SRC_VAL_0_OFF + GPIO_TIM_CH * stride);
-
-	ch->IRQ_MODE.B.IRQ_MODE = 3u; /* singlePulse — one SRC assert per edge */
-	ch->IRQ_EN.U = 0u;
-	ch->IRQ_EN.B.NEWVAL_IRQ_EN = 1u;
-	ch->IRQ_NOTIFY.U = 0x1Fu;
-	ch->CTRL.B.TIM_EN = 1u;
-
-	tim_ack();
-	g_tim_armed = 1u;
-	return ULMK_OK;
+	return NULL;
 }
 
 static void defer_subs(uint16_t enc)
 {
 	uint32_t i;
-	int level;
-	int ok;
-	int rose;
-	int fell;
 
-	ok = (do_get(enc, &level) == ULMK_OK);
 	for (i = 0u; i < GPIO_MAX_SUBS; i++) {
 		if (!g_subs[i].active || g_subs[i].pin != enc)
 			continue;
-		if (!ok) {
-			(void)ulmk_notif_signal(g_subs[i].notif,
-						1u << g_subs[i].bit);
-			continue;
-		}
-		rose = (level && !g_subs[i].last);
-		fell = (!level && g_subs[i].last);
-		/*
-		 * Forced IRQ (HIL) may leave the level unchanged — still
-		 * notify every subscriber on this pin.
-		 */
-		if ((!rose && !fell) ||
-		    (rose && (g_subs[i].edge & GPIO_EVT_RISING)) ||
-		    (fell && (g_subs[i].edge & GPIO_EVT_FALLING)))
-			(void)ulmk_notif_signal(g_subs[i].notif,
-						1u << g_subs[i].bit);
-		g_subs[i].last = level;
+		(void)ulmk_notif_signal(g_subs[i].notif,
+					1u << g_subs[i].bit);
 	}
+}
+
+static int eru_arm(uint16_t enc, uint32_t edge)
+{
+	const struct eru_pin *rp;
+	IfxScuEru_InputChannel ch;
+
+	rp = eru_lookup(enc);
+	if (!rp)
+		return ULMK_EINVAL;
+
+	ch = (IfxScuEru_InputChannel)rp->ch;
+	IfxScuEru_selectExternalInput(
+		ch, (IfxScuEru_ExternalInputSelection)rp->sel);
+
+	IfxScuEru_disableRisingEdgeDetection(ch);
+	IfxScuEru_disableFallingEdgeDetection(ch);
+	if (edge & GPIO_EVT_RISING)
+		IfxScuEru_enableRisingEdgeDetection(ch);
+	if (edge & GPIO_EVT_FALLING)
+		IfxScuEru_enableFallingEdgeDetection(ch);
+
+	IfxScuEru_enableTriggerPulse(ch);
+	IfxScuEru_connectTrigger(ch, IfxScuEru_InputNodePointer_0);
+
+	if (!g_ogu0_armed) {
+		IfxScuEru_setInterruptGatingPattern(
+			IfxScuEru_OutputChannel_0,
+			IfxScuEru_InterruptGatingPattern_alwaysActive);
+		g_ogu0_armed = 1u;
+	}
+
+	IfxScuEru_clearEventFlag(ch);
+	g_eru_enc[rp->ch] = enc;
+	g_eru_armed_mask |= (uint8_t)(1u << rp->ch);
+	return ULMK_OK;
 }
 
 static int do_subscribe(uint16_t enc, uint32_t edge, ulmk_notif_t n,
 			uint32_t bit)
 {
 	uint32_t i;
-	int level;
 	int rc;
 
-	if (edge == GPIO_EVT_NONE)
+	if (edge == GPIO_EVT_NONE || bit > 31u)
 		return ULMK_EINVAL;
-	/* IRQ path is wired for Button1 (P00.7 → TIM2 CH6) only. */
-	if (enc != GPIO_BTN_ENC)
-		return ULMK_EINVAL;
-	if (do_get(enc, &level) != ULMK_OK)
+	if (!eru_lookup(enc))
 		return ULMK_EINVAL;
 
-	rc = tim_arm(edge);
+	rc = eru_arm(enc, edge);
 	if (rc != ULMK_OK)
 		return rc;
 
@@ -293,7 +263,6 @@ static int do_subscribe(uint16_t enc, uint32_t edge, ulmk_notif_t n,
 			g_subs[i].edge = edge;
 			g_subs[i].notif = n;
 			g_subs[i].bit = bit;
-			g_subs[i].last = level;
 			g_subs[i].active = 1;
 			return ULMK_OK;
 		}
@@ -301,28 +270,46 @@ static int do_subscribe(uint16_t enc, uint32_t edge, ulmk_notif_t n,
 	return ULMK_ENOMEM;
 }
 
-static void gpio_server(void *arg)
+static void gpio_irq_ack(void)
 {
-	ulmk_msg_t msg;
-	ulmk_msg_t reply;
-	ulmk_tid_t sender;
+	ulmk_irq_ack(GPIO_SRPN);
+}
+
+static void gpio_irq_server(void *arg)
+{
 	uint32_t bits;
-	int value;
+	uint32_t ch;
 	int rc;
 
 	(void)arg;
 	for (;;) {
 		bits = 0u;
-		sender = ULMK_TID_INVALID;
-		rc = ulmk_ep_recv_or_notif(g_gpio_ep, g_irq_notif,
-					   1u << GPIO_IRQ_BIT, &msg, &sender,
-					   &bits);
-		if (rc == 1) {
-			tim_ack();
-			defer_subs(GPIO_BTN_ENC);
+		rc = ulmk_notif_wait(g_irq_notif, 1u << GPIO_IRQ_BIT, &bits);
+		if (rc != ULMK_OK)
 			continue;
+
+		for (ch = 0u; ch < GPIO_ERU_CH_MAX; ch++) {
+			if (!IfxScuEru_getEventFlagStatus(
+				    (IfxScuEru_InputChannel)ch))
+				continue;
+			IfxScuEru_clearEventFlag((IfxScuEru_InputChannel)ch);
+			if (g_eru_armed_mask & (uint8_t)(1u << ch))
+				defer_subs(g_eru_enc[ch]);
 		}
-		if (rc != 0)
+		gpio_irq_ack();
+	}
+}
+
+static void gpio_ipc_server(void *arg)
+{
+	ulmk_msg_t msg;
+	ulmk_msg_t reply;
+	ulmk_tid_t sender;
+	int value;
+
+	(void)arg;
+	for (;;) {
+		if (ulmk_ep_recv(g_gpio_ep, &msg, &sender) != ULMK_OK)
 			continue;
 
 		reply.label = 0u;
@@ -349,11 +336,6 @@ static void gpio_server(void *arg)
 				(uint16_t)msg.words[0], msg.words[1],
 				(ulmk_notif_t)msg.words[2], msg.words[3]);
 			break;
-		case GPIO_MSG_IRQ_KICK:
-			/* Same defer path as TIM IRQ (HIL without SRC SETR). */
-			defer_subs(GPIO_BTN_ENC);
-			reply.words[0] = (uint32_t)ULMK_OK;
-			break;
 		default:
 			break;
 		}
@@ -364,7 +346,8 @@ static void gpio_server(void *arg)
 ulmk_tid_t gpio_init(void)
 {
 	ulmk_thread_attr_t attr = {0};
-	ulmk_tid_t tid;
+	ulmk_tid_t ipc_tid;
+	ulmk_tid_t irq_tid;
 	int ret;
 
 	if (g_gpio_ep != ULMK_EP_INVALID)
@@ -381,6 +364,15 @@ ulmk_tid_t gpio_init(void)
 		return ULMK_TID_INVALID;
 	}
 
+	if (!ulmk_mem_map((void *)(uintptr_t)GPIO_SCU_ERU_BASE,
+			  GPIO_SCU_ERU_SIZE,
+			  ULMK_PERM_READ | ULMK_PERM_WRITE,
+			  ULMK_MMAP_PERIPH)) {
+		ulmk_ep_destroy(g_gpio_ep);
+		g_gpio_ep = ULMK_EP_INVALID;
+		return ULMK_TID_INVALID;
+	}
+
 	ret = ulmk_irq_bind_hw(GPIO_SRPN, g_irq_notif, GPIO_IRQ_BIT,
 			       (uintptr_t)GPIO_SRC);
 	if (ret != ULMK_OK)
@@ -389,20 +381,34 @@ ulmk_tid_t gpio_init(void)
 	if (ret != ULMK_OK)
 		return ULMK_TID_INVALID;
 
-	attr.name       = "gpio";
-	attr.entry      = gpio_server;
+	attr.name       = "gpio_ipc";
+	attr.entry      = gpio_ipc_server;
 	attr.arg        = NULL;
 	attr.priority   = 2u;
 	attr.stack_size = GPIO_STACK_SIZE;
 	attr.privilege  = ULMK_PRIV_DRIVER;
-
-	tid = ulmk_thread_create(&attr);
-	if (tid == ULMK_TID_INVALID) {
+	ipc_tid = ulmk_thread_create(&attr);
+	if (ipc_tid == ULMK_TID_INVALID) {
 		ulmk_ep_destroy(g_gpio_ep);
 		g_gpio_ep = ULMK_EP_INVALID;
 		return ULMK_TID_INVALID;
 	}
-	ulmk_cap_grant(tid, ULMK_CAP_MAP_PERIPH);
-	ulmk_cap_grant(tid, ULMK_CAP_IRQ);
-	return tid;
+	ulmk_cap_grant(ipc_tid, ULMK_CAP_MAP_PERIPH);
+
+	attr.name       = "gpio_irq";
+	attr.entry      = gpio_irq_server;
+	attr.arg        = NULL;
+	attr.priority   = 1u;
+	attr.stack_size = GPIO_STACK_SIZE;
+	attr.privilege  = ULMK_PRIV_DRIVER;
+	irq_tid = ulmk_thread_create(&attr);
+	if (irq_tid == ULMK_TID_INVALID) {
+		ulmk_ep_destroy(g_gpio_ep);
+		g_gpio_ep = ULMK_EP_INVALID;
+		return ULMK_TID_INVALID;
+	}
+	ulmk_cap_grant(irq_tid, ULMK_CAP_MAP_PERIPH);
+	ulmk_cap_grant(irq_tid, ULMK_CAP_IRQ);
+
+	return ipc_tid;
 }

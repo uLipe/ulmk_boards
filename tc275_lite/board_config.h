@@ -31,8 +31,8 @@
 #define ULMK_BOARD_SRC_VADC_G0_SR0	0xF0038980u
 #define ULMK_BOARD_SRC_CAN0_INT0	0xF0038900u
 #define ULMK_BOARD_SRC_I2C0_P		0xF0038314u
-/* Button1 P00.7 → GTM TIM2 CH6 / TIN16 */
-#define ULMK_BOARD_SRC_GTM_TIM2_6	0xF00397D8u
+/* SCU ERU OGU0 → SRC_SCUERU0 (gpio_subscribe edge IRQ) */
+#define ULMK_BOARD_SRC_SCU_ERU0		0xF0038CD4u
 
 /* SRPN allocation (CPU0) — one priority per service request line. */
 #define ULMK_BOARD_IRQ_STM0		2u
@@ -42,7 +42,7 @@
 #define ULMK_BOARD_IRQ_CAN0		6u
 #define ULMK_BOARD_IRQ_I2C0_P		7u
 #define ULMK_BOARD_IRQ_STM0_CMP1	8u	/* I2C xfer timeout (CMP1) */
-#define ULMK_BOARD_IRQ_GPIO_BTN		9u	/* TIM2 CH6 ← Button1 */
+#define ULMK_BOARD_IRQ_GPIO_ERU		9u	/* SCU ERU0 */
 
 /* ── Timer peripheral (STM0, Core 0) — IfxStm_reg.h MODULE_STM0 ─────────── */
 
