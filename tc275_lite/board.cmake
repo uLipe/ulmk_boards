@@ -25,6 +25,8 @@ set(ULMK_BOARD_SOURCES
     board_console.c
     board_timer.c
     board_leds.c
+    drivers/pinmux/src/server.c
+    drivers/pinmux/src/client.c
     drivers/gpio/src/server.c
     drivers/gpio/src/client.c
     drivers/asclin/src/server.c
@@ -42,6 +44,8 @@ set(ULMK_BOARD_SOURCES
 
 set(ULMK_BOARD_INCLUDES
     ${ULMK_BOARD_ILLD_INCLUDES}
+    "${CMAKE_CURRENT_LIST_DIR}/drivers/pinmux/include"
+    "${CMAKE_CURRENT_LIST_DIR}/drivers/pinmux/src"
     "${CMAKE_CURRENT_LIST_DIR}/drivers/gpio/include"
     "${CMAKE_CURRENT_LIST_DIR}/drivers/gpio/src"
     "${CMAKE_CURRENT_LIST_DIR}/drivers/asclin/include"
