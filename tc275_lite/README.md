@@ -284,11 +284,20 @@ REQ7) get edge IRQs from the GPIO IRQ thread (`SRC_SCUERU0` / EIFR).
 | `silicon_baseline` | `scripts/hil-baseline-check.sh` |
 | `silicon_e2e` | `scripts/hil-silicon-e2e.sh` |
 | `silicon_unit` | `scripts/hil-silicon-unit.sh` |
+| `silicon_cap_neg` | `scripts/hil-silicon-cap-neg.sh` |
+| `silicon_mem_grant` | `scripts/hil-silicon-mem-grant.sh` |
+| `silicon_fault_policy` | `scripts/hil-silicon-fault-policy.sh` |
+| `silicon_pool_exhaust` | `scripts/hil-silicon-pool-exhaust.sh` |
+| `silicon_destroy_waiters` | `scripts/hil-silicon-destroy-waiters.sh` |
+| `silicon_kill_rendezvous` | `scripts/hil-silicon-kill-rendezvous.sh` |
+| `silicon_ipc_pi` | `scripts/hil-silicon-ipc-pi.sh` |
+| `silicon_recv_or_notif_race` | `scripts/hil-silicon-recv-or-notif-race.sh` |
+| `silicon_irq_stress` | `scripts/hil-silicon-irq-stress.sh` |
 | `silicon_stress` | `scripts/hil-silicon-stress.sh` |
 | `silicon_wcet` | `scripts/hil-silicon-wcet.sh` |
 | `board_blinky` | `scripts/hil-board-blinky.sh` |
 
-Order: baseline → e2e → unit → stress → wcet.  Blinky is the BSP demo (not a cert gate).
+Order: baseline → e2e → unit → edge/fault suites → lifecycle/IRQ suites → stress → wcet.  Blinky is the BSP demo (not a cert gate).
 Expect `SILICON_*: PASS` in the RAM log; blinky smoke looks for `led1=`.
 
 ```bash
