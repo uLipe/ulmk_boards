@@ -295,10 +295,20 @@ REQ7) get edge IRQs from the GPIO IRQ thread (`SRC_SCUERU0` / EIFR).
 | `silicon_irq_stress` | `scripts/hil-silicon-irq-stress.sh` |
 | `silicon_stress` | `scripts/hil-silicon-stress.sh` |
 | `silicon_wcet` | `scripts/hil-silicon-wcet.sh` |
+| `silicon_smp_smoke` | `scripts/hil-silicon-smp-smoke.sh` (needs `--enable-smp`) |
 | `board_blinky` | `scripts/hil-board-blinky.sh` |
 
-Order: baseline → e2e → unit → edge/fault suites → lifecycle/IRQ suites → stress → wcet.  Blinky is the BSP demo (not a cert gate).
+Order: baseline → e2e → unit → edge/fault suites → lifecycle/IRQ suites → stress → wcet → smp_smoke.  Blinky is the BSP demo (not a cert gate).
 Expect `SILICON_*: PASS` in the RAM log; blinky smoke looks for `led1=`.
+
+SMP HIL (CPU0+CPU1):
+
+```bash
+python3 tools/dev.py build --board ../ulmk_boards/tc275_lite --clean \
+  --enable-smp --no-components --component silicon_smp_smoke
+bash ../ulmk_boards/tc275_lite/scripts/hil-silicon-smp-smoke.sh \
+  ../build/ulipe-tricore-tc275_lite/ulmk
+```
 
 ```bash
 python3 tools/dev.py build --board ../ulmk_boards/tc275_lite \

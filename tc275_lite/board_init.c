@@ -302,3 +302,60 @@ void ulmk_board_init(void)
 	(void)pll_init_20mhz_200mhz();
 	bsp_enable_module_clocks();
 }
+
+/*
+ * Disable this core's CPU WDT.  Must run on the target core — unlocking
+ * WDTCPU[n] EndInit from another core spins forever on ENDINIT.
+ * Idempotent: skip if DR already set (OCDS hil.cfg may disarm first).
+ */
+void ulmk_board_cpu_wdt_disable_self(void)
+{
+	uint16_t pw;
+	uint32_t id;
+	uint32_t spins;
+
+	__asm__ volatile("mfcr %0, %1" : "=d"(id) : "i"(0xFE1Cu));
+	id &= 7u;
+	if (id > 2u)
+		return;
+	if (MODULE_SCU.WDTCPU[id].CON1.B.DR != 0u)
+		return;
+
+	pw = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[id]);
+	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[id], pw);
+	MODULE_SCU.WDTCPU[id].CON1.B.DR = 1u;
+	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[id], pw);
+
+	/* Bound any stuck EndInit poll if debugger left SFRs inconsistent. */
+	for (spins = 0u; spins < 10000u; spins++) {
+		if (MODULE_SCU.WDTCPU[id].CON0.B.ENDINIT != 0u)
+			break;
+	}
+}
+
+/*
+ * Start CPU1: program PC, write DBGSR.HALT=2 (iLLD IfxCpu_startCore).
+ * Do NOT touch WDTCPU[1] EndInit from CPU0 — that wait loops forever.
+ */
+void ulmk_board_cpu_start(uint32_t cpu_id, void (*entry)(void))
+{
+	volatile uint32_t *pc;
+	volatile uint32_t *dbgsr;
+	uint32_t           v;
+
+	if (cpu_id != 1u || !entry)
+		return;
+
+	pc    = (volatile uint32_t *)(uintptr_t)ULMK_BOARD_CPU1_PC;
+	dbgsr = (volatile uint32_t *)(uintptr_t)ULMK_BOARD_CPU1_DBGSR;
+
+	/*
+	 * PC.B.PC occupies bits [31:1].  iLLD writes B.PC = entry>>1 which
+	 * packs to the same word as (entry & ~1).
+	 */
+	*pc = (uint32_t)(uintptr_t)entry & ~1u;
+
+	v = *dbgsr;
+	v = (v & ~0x6u) | (ULMK_BOARD_DBGSR_HALT_RUN << 1);
+	*dbgsr = v;
+}
