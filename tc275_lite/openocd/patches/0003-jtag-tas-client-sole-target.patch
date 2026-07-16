@@ -1,7 +1,16 @@
 diff --git a/src/jtag/drivers/tas_client/tas_client.c b/src/jtag/drivers/tas_client/tas_client.c
-index 55294d6..e98fc6e 100644
+index 55294d6..c29d921 100644
 --- a/src/jtag/drivers/tas_client/tas_client.c
 +++ b/src/jtag/drivers/tas_client/tas_client.c
+@@ -98,7 +98,7 @@ static int tas_client_reset(int trst, int srst) {
+   }
+   if (srst) {
+     return tas_client_device_connect(client_state.sock,
+-                                     TAS_DEV_CON_FEAT_RESET_AND_HALT);
++                                     TAS_DEV_CON_FEAT_RESET);
+   }
+ 
+   return 0;
 @@ -342,6 +342,12 @@ static int tas_client_op_connect(struct aurix_ocds *ocds) {
      }
    }
