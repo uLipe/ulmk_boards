@@ -30,16 +30,20 @@ OCD_SEARCH=(-s "$OCD_SCRIPTS" -s "$BOARD_OCD")
 
 # On exit (Ctrl-C / GDB detach), leave the core running standalone.  A debug
 # session ends with the target halted; without this the board stays frozen at
-# the last PC after the debugger is gone.  Mirror flash.sh's proven release:
-# genuine "reset run" with the reset-end DAP pokes disabled (SW handles WDT /
-# EndInit) so the next button/PORST boots cleanly.
+# the last PC after the debugger is gone.  Same two-step as flash.sh:
+# FEAT_RESET (no mid-reset DAP), then hot-attach ulmk_release_run + resume.
 release_on_exit() {
 	pkill -9 -x openocd 2>/dev/null || true
 	sleep 1
 	"$OPENOCD" "${OCD_SEARCH[@]}" -f "${OCD_CFG}" \
-		-c "gdb port disabled; init; targets tc27x.cpu0; tc27x.cpu0 configure -event reset-end {}; reset run; after 300; shutdown" \
+		-c "gdb port disabled; init; targets tc27x.cpu0; tc27x.cpu0 configure -event reset-end {}; reset run; after 200; shutdown" \
 		>/dev/null 2>&1 || true
-	echo "debug: released target (reset run)"
+	pkill -9 -x openocd 2>/dev/null || true
+	sleep 0.3
+	"$OPENOCD" "${OCD_SEARCH[@]}" -f "${OCD_CFG}" \
+		-c "gdb port disabled; reset_config none separate; init; targets tc27x.cpu0; ulmk_release_run; resume; after 300; shutdown" \
+		>/dev/null 2>&1 || true
+	echo "debug: released target (reset run + ulmk_release_run)"
 }
 trap release_on_exit EXIT
 
