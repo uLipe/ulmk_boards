@@ -54,6 +54,8 @@ static void wdt_disable_safety(void)
 	pw = IfxScuWdt_getSafetyWatchdogPasswordInline();
 	IfxScuWdt_clearSafetyEndinitInline(pw);
 	MODULE_SCU.WDTS.CON1.B.DR = 1u;
+	/* Clear double-SMU-reset latch before first service window (UM 7.2.1.10). */
+	MODULE_SCU.WDTS.CON1.B.CLRIRF = 1u;
 	IfxScuWdt_setSafetyEndinitInline(pw);
 }
 
@@ -212,65 +214,93 @@ static void wait_clc_enabled(volatile uint32_t *clc)
 	}
 }
 
-static void bsp_enable_module_clocks(void)
+void ulmk_board_i2c0_hw_init(void);
+
+static void bsp_enable_console_clocks(void)
 {
 	uint16_t pw_cpu;
 	uint16_t pw_sfty;
 
 	/*
-	 * CLC.DISR is EndInit-protected.  Driver threads (IO=1) must not touch
-	 * CLC — enable ASCLIN0/STM0/I2C0/VADC/CAN/GTM here once at bring-up.
+	 * STM0 CLC: CPU EndInit (iLLD).  ASCLIN0 CLC: also unlock Safety —
+	 * with ENIDIS=0 (button/PORST / hot-attach without CBS), a CPU-only
+	 * unlock leaves ASCLIN0.CLC.DISR stuck at 1 while STM0 enables fine.
 	 */
 	pw_cpu  = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[0]);
 	pw_sfty = IfxScuWdt_getSafetyWatchdogPasswordInline();
 	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
 	IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
-	MODULE_ASCLIN0.CLC.B.DISR = 0u;
-	MODULE_STM0.CLC.B.DISR = 0u;
-	MODULE_I2C0.CLC.B.DISR = 0u;
-	MODULE_VADC.CLC.B.DISR = 0u;
-	MODULE_CAN.CLC.B.DISR = 0u;
-	MODULE_CAN.CLC.B.EDIS = 1u; /* ignore sleep request */
-	MODULE_GTM.CLC.B.DISR = 0u;
+	MODULE_ASCLIN0.CLC.U = 0u;
+	MODULE_STM0.CLC.U = 0u;
+	__asm__ volatile("dsync" ::: "memory");
 	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
 	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
 
 	wait_clc_enabled((volatile uint32_t *)&MODULE_ASCLIN0.CLC.U);
 	wait_clc_enabled((volatile uint32_t *)&MODULE_STM0.CLC.U);
+}
+
+/*
+ * Optional MMIO bring-up for CAN / I2C / ADC / PWM demos.
+ * Call from supervisor context only (board_init or future board hook).
+ */
+void ulmk_board_init_extra_periphs(void)
+{
+	uint16_t pw_cpu;
+	uint16_t pw_sfty;
+
+	pw_cpu  = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[0]);
+	pw_sfty = IfxScuWdt_getSafetyWatchdogPasswordInline();
+	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
+	IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
+	MODULE_I2C0.CLC.B.DISR = 0u;
+	MODULE_VADC.CLC.B.DISR = 0u;
+	MODULE_CAN.CLC.B.DISR = 0u;
+	MODULE_CAN.CLC.B.EDIS = 1u;
+	MODULE_GTM.CLC.B.DISR = 0u;
+	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
+	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
+
 	wait_clc_enabled((volatile uint32_t *)&MODULE_I2C0.CLC.U);
 	wait_clc_enabled((volatile uint32_t *)&MODULE_VADC.CLC.U);
 	wait_clc_enabled((volatile uint32_t *)&MODULE_CAN.CLC.U);
 	wait_clc_enabled((volatile uint32_t *)&MODULE_GTM.CLC.U);
 
-	/*
-	 * MultiCAN fCAN = fSPB (100 MHz): CLKSEL=fclc, FDR STEP=1023 DM=1.
-	 * FDR/MCR writes sit under EndInit on some silicon revisions — do
-	 * them here so the userspace driver never touches EndInit.
-	 */
 	pw_cpu  = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[0]);
 	pw_sfty = IfxScuWdt_getSafetyWatchdogPasswordInline();
 	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
 	IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
 	MODULE_CAN.MCR.B.CLKSEL = 0u;
-	MODULE_CAN.MCR.B.CLKSEL = 1u; /* fclc = fSPB */
+	MODULE_CAN.MCR.B.CLKSEL = 1u;
 	MODULE_CAN.FDR.B.STEP = 1023u;
 	MODULE_CAN.FDR.B.DM = 1u;
 	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
 	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
 
-	/*
-	 * I2C0 CLC1 + FDIV — match iLLD IfxI2c_enableModule/setBaudrate:
-	 * CPU EndInit only (not Safety), busy-wait RMC/DISS inside the window.
-	 * Baud1=100 MHz, RMC=1, INC=1, DEC=499 → 100 kbit/s.
-	 */
-	pw_cpu = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[0]);
+	ulmk_board_i2c0_hw_init();
+}
+
+/*
+ * Full I2C0 kernel bring-up (CLC1, baud, GPCTL.PISEL).
+ * Must run in supervisor context before any driver thread touches I2C.
+ * Safe to call more than once (idempotent enough for boot).
+ */
+void ulmk_board_i2c0_hw_init(void)
+{
+	uint16_t pw_cpu;
+	uint16_t pw_sfty;
+
+	pw_cpu  = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[0]);
+	pw_sfty = IfxScuWdt_getSafetyWatchdogPasswordInline();
 	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
+	IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
 	MODULE_I2C0.CLC1.B.RMC = 1u;
 	while (MODULE_I2C0.CLC1.B.RMC != 1u)
 		;
 	MODULE_I2C0.CLC1.B.DISR = 0u;
 	while (MODULE_I2C0.CLC1.B.DISS == 1u)
 		;
+	__asm__ volatile("dsync" ::: "memory");
 	MODULE_I2C0.ERRIRQSM.U = 0u;
 	MODULE_I2C0.PIRQSM.U = 0u;
 	MODULE_I2C0.IMSC.U = 0u;
@@ -283,10 +313,11 @@ static void bsp_enable_module_clocks(void)
 	MODULE_I2C0.TIMCFG.B.SCL_LOW_LEN = 0x20u;
 	MODULE_I2C0.ACCEN0.U = 0xFFFFFFFFu;
 	/*
-	 * GPCTL.PISEL must be programmed here (supervisor).  A userspace
-	 * write to GPCTL stalls the SPB on this kit even with RUNCTRL=0.
+	 * Full-word store — bitfield RMW (ld.w of GPCTL) class-4 trapped on
+	 * standalone reset before OpenOCD's reset-end WDT poke.
 	 */
-	MODULE_I2C0.GPCTL.B.PISEL = ULMK_BOARD_I2C0_PISEL;
+	MODULE_I2C0.GPCTL.U = ULMK_BOARD_I2C0_PISEL;
+	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
 	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
 }
 
@@ -295,10 +326,110 @@ void ulmk_board_init(void)
 	/*
 	 * Disable WDTs first so PLL lock / ramp waits cannot reset the core.
 	 * EndInit still works with DR=1 (same as iLLD disable*Watchdog).
+	 *
+	 * Do NOT write CBS_OCNTRL (0xF000047C) from CPU code — that register
+	 * is an OCDS/DAP unlock used by OpenOCD flash/reset-end.  A CPU store
+	 * traps on standalone/button/PORST boot (red ESR0, no console).
+	 *
+	 * BTV/BIV/ISP/SYSCON are CPU-EndInit protected: arch_init programs
+	 * them via ulmk_board_cpu_endinit_{clear,set} so button reset works
+	 * without the debugger's CBS unlock.
 	 */
 	wdt_disable_cpu0();
 	wdt_disable_safety();
 
+	/*
+	 * TC275 Lite LED3 is wired to ESR0 (active low).  Clear the
+	 * Application Reset Indicator so RCU releases the pin if SSW left
+	 * ARI set after a prior warm reset.
+	 *
+	 * Must be a full-word store under Safety EndInit — bitfield RMW on
+	 * ESROCFG class-4 traps on button/PORST (same pattern as I2C GPCTL).
+	 * With debugger ENIDIS the RMW is silently allowed, which hid this.
+	 */
+	{
+		uint16_t pw_sfty;
+
+		pw_sfty = IfxScuWdt_getSafetyWatchdogPasswordInline();
+		IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
+		MODULE_SCU.ESROCFG.U = 0x2u; /* ARC=1 → clears ARI */
+		IfxScuWdt_setSafetyEndinitInline(pw_sfty);
+	}
+
 	(void)pll_init_20mhz_200mhz();
-	bsp_enable_module_clocks();
+	bsp_enable_console_clocks();
+	ulmk_board_init_extra_periphs();
+}
+
+void ulmk_board_cpu_endinit_clear(void)
+{
+	uint16_t pw;
+
+	pw = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[0]);
+	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw);
+}
+
+void ulmk_board_cpu_endinit_set(void)
+{
+	uint16_t pw;
+
+	pw = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[0]);
+	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw);
+}
+
+/*
+ * Disable this core's CPU WDT.  Must run on the target core — unlocking
+ * WDTCPU[n] EndInit from another core spins forever on ENDINIT.
+ * Idempotent: skip if DR already set (OCDS hil.cfg may disarm first).
+ */
+void ulmk_board_cpu_wdt_disable_self(void)
+{
+	uint16_t pw;
+	uint32_t id;
+	uint32_t spins;
+
+	__asm__ volatile("mfcr %0, %1" : "=d"(id) : "i"(0xFE1Cu));
+	id &= 7u;
+	if (id > 2u)
+		return;
+	if (MODULE_SCU.WDTCPU[id].CON1.B.DR != 0u)
+		return;
+
+	pw = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[id]);
+	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[id], pw);
+	MODULE_SCU.WDTCPU[id].CON1.B.DR = 1u;
+	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[id], pw);
+
+	/* Bound any stuck EndInit poll if debugger left SFRs inconsistent. */
+	for (spins = 0u; spins < 10000u; spins++) {
+		if (MODULE_SCU.WDTCPU[id].CON0.B.ENDINIT != 0u)
+			break;
+	}
+}
+
+/*
+ * Start CPU1: program PC, write DBGSR.HALT=2 (iLLD IfxCpu_startCore).
+ * Do NOT touch WDTCPU[1] EndInit from CPU0 — that wait loops forever.
+ */
+void ulmk_board_cpu_start(uint32_t cpu_id, void (*entry)(void))
+{
+	volatile uint32_t *pc;
+	volatile uint32_t *dbgsr;
+	uint32_t           v;
+
+	if (cpu_id != 1u || !entry)
+		return;
+
+	pc    = (volatile uint32_t *)(uintptr_t)ULMK_BOARD_CPU1_PC;
+	dbgsr = (volatile uint32_t *)(uintptr_t)ULMK_BOARD_CPU1_DBGSR;
+
+	/*
+	 * PC.B.PC occupies bits [31:1].  iLLD writes B.PC = entry>>1 which
+	 * packs to the same word as (entry & ~1).
+	 */
+	*pc = (uint32_t)(uintptr_t)entry & ~1u;
+
+	v = *dbgsr;
+	v = (v & ~0x6u) | (ULMK_BOARD_DBGSR_HALT_RUN << 1);
+	*dbgsr = v;
 }
