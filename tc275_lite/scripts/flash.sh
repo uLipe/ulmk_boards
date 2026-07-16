@@ -95,6 +95,7 @@ run_ocd() {
 	local label="$1"
 	local timeout_s="$2"
 	local cmd="$3"
+	local cfg="${4:-$OCD_CFG}"
 	local t0 t1 ec
 
 	kill_openocd
@@ -103,7 +104,7 @@ run_ocd() {
 	t0="$(date +%s)"
 	set +e
 	timeout --signal=KILL "${timeout_s}" \
-		"$OPENOCD" "${OCD_SEARCH[@]}" -f "$OCD_CFG" -c "$cmd" \
+		"$OPENOCD" "${OCD_SEARCH[@]}" -f "$cfg" -c "$cmd" \
 		>"$OCD_LOG" 2>&1
 	ec=$?
 	set -e
@@ -124,21 +125,23 @@ log "flash: $(basename "$ELF") (${BYTES} B, sectors 0-${LAST_SECTOR})"
 # (write_image fails if erase ran in the same init).
 log "  erase..."
 run_ocd erase 20 \
-	"gdb port disabled; init; flash erase_sector pflash0 0 ${LAST_SECTOR}; shutdown"
+	"gdb port disabled; init; targets tc27x.cpu0; halt; flash erase_sector pflash0 0 ${LAST_SECTOR}; shutdown"
 
 log "  program..."
 if [[ "$VERIFY" -eq 1 ]]; then
 	run_ocd program "$FLASH_TIMEOUT" \
-		"gdb port disabled; init; flash write_image ${HEX} 0; verify_image ${HEX} 0; shutdown"
+		"gdb port disabled; init; targets tc27x.cpu0; halt; flash write_image ${HEX} 0; verify_image ${HEX} 0; shutdown"
 else
 	run_ocd program "$FLASH_TIMEOUT" \
-		"gdb port disabled; init; flash write_image ${HEX} 0; shutdown"
+		"gdb port disabled; init; targets tc27x.cpu0; halt; flash write_image ${HEX} 0; shutdown"
 fi
 
-# reset run alone often leaves PC stuck at _start on this TAS path;
-# halt then resume reliably enters userspace.
-log "  start..."
-run_ocd start 15 \
-	"gdb port disabled; init; reset halt; resume; shutdown"
+# Final action MUST be a genuine "reset & run" (TAS FEAT_RESET=0x0001).
+# That leaves OSTATE.OEN=0 so the next button/PORST boots without Halt-After-
+# Reset.  Disable reset-end DAP pokes — they fail mid-reset ("OCDS sequence")
+# and are unnecessary: board_wdt_early.S + board_init handle WDT/EndInit in SW.
+log "  release..."
+run_ocd release 20 \
+	"gdb port disabled; init; targets tc27x.cpu0; tc27x.cpu0 configure -event reset-end {}; reset run; after 300; shutdown"
 
 log "  flash + start — done"
