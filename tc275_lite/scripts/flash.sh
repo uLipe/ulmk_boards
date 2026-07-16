@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tc275_lite/scripts/flash.sh — program ulmk.elf over TAS + AURIX OpenOCD.
 #
-# Contract: convert ELF → erase → program → reset halt/resume → exit.
+# Contract: convert ELF → erase → program → reset + leave runnable → exit.
 # Never leaves OpenOCD hanging; each phase has a hard timeout.
 set -euo pipefail
 
@@ -136,12 +136,17 @@ else
 		"gdb port disabled; init; targets tc27x.cpu0; halt; flash write_image ${HEX} 0; shutdown"
 fi
 
-# Final action MUST be a genuine "reset & run" (TAS FEAT_RESET=0x0001).
-# That leaves OSTATE.OEN=0 so the next button/PORST boots without Halt-After-
-# Reset.  Disable reset-end DAP pokes — they fail mid-reset ("OCDS sequence")
-# and are unnecessary: board_wdt_early.S + board_init handle WDT/EndInit in SW.
+# Two-step release:
+# 1) Genuine TAS FEAT_RESET (reset run) with reset-end disabled — clears
+#    sticky Halt-After-Reset / OEN so the next button/PORST boots alone.
+#    DAP pokes during that reset race the OCDS sequencer ("OCDS sequence").
+# 2) Hot-attach ulmk_release_run — ENIDIS + disarm WDTCPU0/1/2 + WDTS,
+#    clear TRn/HARR, force DBGSR.HALT=run, resume.  Needed for SMP (CPU1
+#    WDT) and for cores left halted after step 1.
 log "  release..."
-run_ocd release 20 \
-	"gdb port disabled; init; targets tc27x.cpu0; tc27x.cpu0 configure -event reset-end {}; reset run; after 300; shutdown"
+run_ocd release_reset 20 \
+	"gdb port disabled; init; targets tc27x.cpu0; tc27x.cpu0 configure -event reset-end {}; reset run; after 200; shutdown"
+run_ocd release_run 20 \
+	"gdb port disabled; reset_config none separate; init; targets tc27x.cpu0; ulmk_release_run; resume; after 400; shutdown"
 
 log "  flash + start — done"
