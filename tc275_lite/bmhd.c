@@ -1,32 +1,49 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * tc275_lite/bmhd.c — TC2xx Boot Mode Header (BMHD0 @ 0xA0000000).
+ * tc275_lite/bmhd.c — TC27x Boot Mode Header (BMHD0 @ 0xA0000000).
  *
- * Layout matches Infineon UM / Lauterbach BMHD0 window (0x20 bytes).
- * STAD is the cached-alias address of _start (see bmhd.ld.in).
- * CRC covers BMI + BMHDID + STAD (first 8 bytes).
+ * Layout is TC2xx-specific (Infineon TC27x UM Table 4-1), NOT the
+ * TC3xx/iLLD "BMI, BMHDID, STAD, CRC" order:
+ *
+ *   00H STADABM     user code start (cached PFlash)
+ *   04H BMI         boot mode index
+ *   06H BMHDID      must be B359H
+ *   08H ChkStart    ABM range (0 if Internal Flash start)
+ *   0CH ChkEnd
+ *   10H CRCrange / CRCrangeInv
+ *   18H CRChead / CRCheadInv  — CRC over first 24 bytes (00H..17H)
+ *
+ * BMI 0x0078 = PINDIS=1, HWCFG=111B (Internal start from Flash), lockstep off.
+ * A wrong layout makes BootROM reject every BMHD → Generic BSL / ESR0 red on
+ * button and PORST, while OpenOCD "reset; resume" still works by forcing PC.
  */
 
 #include <stdint.h>
 
 typedef struct {
-	uint16_t bmi;
-	uint16_t bmhdid;
-	uint32_t stad;
-	uint32_t crc;
-	uint32_t crc_inv;
-	uint32_t reserved[4]; /* pad to 0x20 — end of BMHD0 */
+	uint32_t stad;		/* 00: STADABM */
+	uint16_t bmi;		/* 04 */
+	uint16_t bmhdid;	/* 06 */
+	uint32_t chk_start;	/* 08 */
+	uint32_t chk_end;	/* 0C */
+	uint32_t crc_range;	/* 10 */
+	uint32_t crc_range_inv;	/* 14 */
+	uint32_t crc_head;	/* 18 */
+	uint32_t crc_head_inv;	/* 1C */
 } tc27x_bmhd_t;
 
 /*
- * BMI 0x003E, STAD = _start @ 0xA0000020 — CRC from tools/gen_bmhd_crc.py.
+ * STAD = _start @ 0xA0000020.  CRC from tools/gen_bmhd_crc.py (24-byte header).
  * Re-run that script if STAD or BMI changes.
  */
 const tc27x_bmhd_t __attribute__((section(".bmhd"), used)) _ulmk_bmhd = {
-	.bmi      = 0x003Eu,
-	.bmhdid   = 0xB359u,
-	.stad     = 0xA0000020u,
-	.crc      = 0xE3029D63u,
-	.crc_inv  = 0x1CFD629Cu,
-	.reserved = { 0 },
+	.stad          = 0xA0000020u,
+	.bmi           = 0x0078u,
+	.bmhdid        = 0xB359u,
+	.chk_start     = 0u,
+	.chk_end       = 0u,
+	.crc_range     = 0u,
+	.crc_range_inv = 0u,
+	.crc_head      = 0xBBA9D932u,
+	.crc_head_inv  = 0x445626CDu,
 };

@@ -2,13 +2,12 @@
  * tc275_lite/bmhd.ld.in — BMHD0 + _start as the BootROM sees them.
  *
  * SSW reads BMHD0 at the CACHED alias 0xA0000000 (Infineon TC2xx:
- * BMHD0 @ A0000000H, size 0x20).  VMA must therefore live in KERNEL_FLASH
- * (0xA0000000).  LMA stays on KERNEL_FLASH_NC (0x80000000) so flashers that
- * program the non-cached window still hit the same physical cells.
+ * BMHD0 @ A0000000H .. A000001FH, Table 4-1 / 4-2).  VMA must therefore
+ * live in KERNEL_FLASH (0xA0000000).  LMA stays on KERNEL_FLASH_NC
+ * (0x80000000) so flashers that program the non-cached window still hit
+ * the same physical cells.
  *
- * Previous layout put .bmhd only in KERNEL_FLASH_NC (VMA 0x80000000) and
- * left 0xA0000000..0xA000002F empty — reset then appeared stuck at
- * 0xA0000020 executing the zero padding.
+ * Layout is TC27x (STAD first), not TC3xx BMI-first.  See bmhd.c.
  */
 .bmhd : {
 	KEEP(*(.bmhd))
