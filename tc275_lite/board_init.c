@@ -361,20 +361,35 @@ void ulmk_board_init(void)
 	ulmk_board_init_extra_periphs();
 }
 
+/*
+ * CPU EndInit for the local core only.  Unlocking WDTCPU[n] from another
+ * core spins forever on ENDINIT — secondaries hit this path from
+ * ulmk_arch_irq_vectors_init / mpu_init.
+ */
 void ulmk_board_cpu_endinit_clear(void)
 {
 	uint16_t pw;
+	uint32_t id;
 
-	pw = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[0]);
-	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw);
+	__asm__ volatile("mfcr %0, %1" : "=d"(id) : "i"(0xFE1Cu));
+	id &= 7u;
+	if (id > 2u)
+		return;
+	pw = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[id]);
+	IfxScuWdt_clearCpuEndinitInline(&MODULE_SCU.WDTCPU[id], pw);
 }
 
 void ulmk_board_cpu_endinit_set(void)
 {
 	uint16_t pw;
+	uint32_t id;
 
-	pw = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[0]);
-	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw);
+	__asm__ volatile("mfcr %0, %1" : "=d"(id) : "i"(0xFE1Cu));
+	id &= 7u;
+	if (id > 2u)
+		return;
+	pw = IfxScuWdt_getCpuWatchdogPasswordInline(&MODULE_SCU.WDTCPU[id]);
+	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[id], pw);
 }
 
 /*
@@ -408,14 +423,21 @@ void ulmk_board_cpu_wdt_disable_self(void)
 }
 
 /*
- * Start CPU1: program PC, write DBGSR.HALT=2 (iLLD IfxCpu_startCore).
+ * Start CPU1 — Infineon PC is only writable while the core is debug-halted.
+ * Sequence (iLLD IfxCpu_startCore + explicit halt-before-PC):
+ *   1. DBGSR.HALT = 1 (halt) so PC accepts the write
+ *   2. program PC
+ *   3. PMCSR[1].REQSLP = Run under Safety EndInit
+ *   4. DBGSR.HALT = 2 (run)
  * Do NOT touch WDTCPU[1] EndInit from CPU0 — that wait loops forever.
  */
 void ulmk_board_cpu_start(uint32_t cpu_id, void (*entry)(void))
 {
 	volatile uint32_t *pc;
 	volatile uint32_t *dbgsr;
+	uint16_t           pw_sfty;
 	uint32_t           v;
+	uint32_t           spins;
 
 	if (cpu_id != 1u || !entry)
 		return;
@@ -423,11 +445,27 @@ void ulmk_board_cpu_start(uint32_t cpu_id, void (*entry)(void))
 	pc    = (volatile uint32_t *)(uintptr_t)ULMK_BOARD_CPU1_PC;
 	dbgsr = (volatile uint32_t *)(uintptr_t)ULMK_BOARD_CPU1_DBGSR;
 
+	/* Halt so PC is writable (HALT field = 1). */
+	v = *dbgsr;
+	v = (v & ~0x6u) | (1u << 1);
+	*dbgsr = v;
+	for (spins = 0u; spins < 10000u; spins++) {
+		if (((*dbgsr) & 0x6u) == (1u << 1))
+			break;
+	}
+
 	/*
 	 * PC.B.PC occupies bits [31:1].  iLLD writes B.PC = entry>>1 which
 	 * packs to the same word as (entry & ~1).
 	 */
 	*pc = (uint32_t)(uintptr_t)entry & ~1u;
+	__asm__ volatile("dsync" ::: "memory");
+
+	pw_sfty = IfxScuWdt_getSafetyWatchdogPasswordInline();
+	IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
+	/* REQSLP = 0 → Run (IfxScu_PMCSR_REQSLP_Run); PMCSR[1] = CPU1 */
+	MODULE_SCU.PMCSR[1].B.REQSLP = 0u;
+	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
 
 	v = *dbgsr;
 	v = (v & ~0x6u) | (ULMK_BOARD_DBGSR_HALT_RUN << 1);
