@@ -136,17 +136,12 @@ else
 		"gdb port disabled; init; targets tc27x.cpu0; halt; flash write_image ${HEX} 0; shutdown"
 fi
 
-# Two-step release:
-# 1) Genuine TAS FEAT_RESET (reset run) with reset-end disabled — clears
-#    sticky Halt-After-Reset / OEN so the next button/PORST boots alone.
-#    DAP pokes during that reset race the OCDS sequencer ("OCDS sequence").
-# 2) Hot-attach ulmk_release_run — ENIDIS + disarm WDTCPU0/1/2 + WDTS,
-#    clear TRn/HARR, force DBGSR.HALT=run, resume.  Needed for SMP (CPU1
-#    WDT) and for cores left halted after step 1.
+# Leave the core runnable with WDTs disarmed BEFORE any instruction fetch.
+# Do NOT "reset run" with WDTs still armed: CSA init in startup.S races the
+# default timeout (board_init disables WDT only after CSA + kern_start).
+# Hot-attach: clear HARR/TRn, ENIDIS, disarm WDTCPU0/1/2+WDTS, DBGSR run.
 log "  release..."
-run_ocd release_reset 20 \
-	"gdb port disabled; init; targets tc27x.cpu0; tc27x.cpu0 configure -event reset-end {}; reset run; after 200; shutdown"
-run_ocd release_run 20 \
-	"gdb port disabled; reset_config none separate; init; targets tc27x.cpu0; ulmk_release_run; resume; after 400; shutdown"
+run_ocd release 20 \
+	"gdb port disabled; reset_config none separate; init; targets tc27x.cpu0; halt; ulmk_release_run; resume; after 400; shutdown"
 
 log "  flash + start — done"

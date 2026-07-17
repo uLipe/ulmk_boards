@@ -18,7 +18,6 @@ include("${CMAKE_CURRENT_LIST_DIR}/deps/illd.cmake")
 
 set(ULMK_BOARD_SOURCES
     bmhd.c
-    board_wdt_early.S
     board_init.c
     board_hil.c
     board_printk_stub.c
