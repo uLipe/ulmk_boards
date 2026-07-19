@@ -423,13 +423,13 @@ void ulmk_board_cpu_wdt_disable_self(void)
 }
 
 /*
- * Start CPU1 — Infineon PC is only writable while the core is debug-halted.
+ * Start a secondary CPU — Infineon PC is only writable while debug-halted.
  * Sequence (iLLD IfxCpu_startCore + explicit halt-before-PC):
  *   1. DBGSR.HALT = 1 (halt) so PC accepts the write
  *   2. program PC
- *   3. PMCSR[1].REQSLP = Run under Safety EndInit
+ *   3. PMCSR[cpu].REQSLP = Run under Safety EndInit
  *   4. DBGSR.HALT = 2 (run)
- * Do NOT touch WDTCPU[1] EndInit from CPU0 — that wait loops forever.
+ * Do NOT touch that core's WDTCPU EndInit from CPU0 — that wait loops forever.
  */
 void ulmk_board_cpu_start(uint32_t cpu_id, void (*entry)(void))
 {
@@ -439,11 +439,17 @@ void ulmk_board_cpu_start(uint32_t cpu_id, void (*entry)(void))
 	uint32_t           v;
 	uint32_t           spins;
 
-	if (cpu_id != 1u || !entry)
+	if (!entry)
 		return;
-
-	pc    = (volatile uint32_t *)(uintptr_t)ULMK_BOARD_CPU1_PC;
-	dbgsr = (volatile uint32_t *)(uintptr_t)ULMK_BOARD_CPU1_DBGSR;
+	if (cpu_id == 1u) {
+		pc    = (volatile uint32_t *)(uintptr_t)ULMK_BOARD_CPU1_PC;
+		dbgsr = (volatile uint32_t *)(uintptr_t)ULMK_BOARD_CPU1_DBGSR;
+	} else if (cpu_id == 2u) {
+		pc    = (volatile uint32_t *)(uintptr_t)ULMK_BOARD_CPU2_PC;
+		dbgsr = (volatile uint32_t *)(uintptr_t)ULMK_BOARD_CPU2_DBGSR;
+	} else {
+		return;
+	}
 
 	/* Halt so PC is writable (HALT field = 1). */
 	v = *dbgsr;
@@ -463,8 +469,8 @@ void ulmk_board_cpu_start(uint32_t cpu_id, void (*entry)(void))
 
 	pw_sfty = IfxScuWdt_getSafetyWatchdogPasswordInline();
 	IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
-	/* REQSLP = 0 → Run (IfxScu_PMCSR_REQSLP_Run); PMCSR[1] = CPU1 */
-	MODULE_SCU.PMCSR[1].B.REQSLP = 0u;
+	/* REQSLP = 0 → Run (IfxScu_PMCSR_REQSLP_Run) */
+	MODULE_SCU.PMCSR[cpu_id].B.REQSLP = 0u;
 	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
 
 	v = *dbgsr;

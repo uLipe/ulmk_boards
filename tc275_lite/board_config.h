@@ -10,12 +10,13 @@
 #define ULMK_BOARD_CONFIG_H
 
 /*
- * SMP targets CPU0 + CPU1 (symmetric 1.6.1).  CPU2 (1.6e) is out of scope.
- * UP builds still compile with NUM_CPU=2 but only CPU0 is started unless
+ * SMP targets CPU0 + CPU1 + CPU2.  Cores are treated as symmetric for
+ * affinity (TC1.6P / TC1.6E differences are ignored for scheduler tests).
+ * UP builds still compile with NUM_CPU=3 but only CPU0 is started unless
  * ULMK_CONFIG_ENABLE_SMP=1.
  */
 #ifndef ULMK_ARCH_NUM_CPU
-#define ULMK_ARCH_NUM_CPU		2
+#define ULMK_ARCH_NUM_CPU		3
 #endif
 
 /* ── Clocks (20 MHz crystal → 200 MHz PLL in board_init) ───────────────── */
@@ -51,11 +52,15 @@
 #define ULMK_BOARD_SRC_GPSR20		0xF0039040u	/* GPSR2 group → CPU2 */
 
 /*
- * CPU1 (MODULE_CPU1 @ 0xF8830000) program counter + debug halt — iLLD TC27D
- * IfxCpu_reg.h.  Write PC.B.PC = entry>>1, then DBGSR.HALT = 2 to run.
+ * Secondary CPU program counter + debug halt — iLLD TC27D IfxCpu_reg.h.
+ * Write PC.B.PC = entry>>1, then DBGSR.HALT = 2 to run.
+ *   CPU1 MODULE @ 0xF8830000
+ *   CPU2 MODULE @ 0xF8850000
  */
 #define ULMK_BOARD_CPU1_PC		0xF883FE08u
 #define ULMK_BOARD_CPU1_DBGSR		0xF883FD00u
+#define ULMK_BOARD_CPU2_PC		0xF885FE08u
+#define ULMK_BOARD_CPU2_DBGSR		0xF885FD00u
 #define ULMK_BOARD_DBGSR_HALT_RUN	0x2u	/* write to HALT[1:0] */
 
 /* SRPN allocation (CPU0) — one priority per service request line. */
