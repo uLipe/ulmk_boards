@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 /*
- * Release a halted secondary CPU (TC275: CPU1).  Sets PC then
+ * Release a halted secondary CPU (TC275: CPU1 / CPU2).  Sets PC then
  * DBGSR.HALT=2 (iLLD IfxCpu_startCore).  Caller/secondary must disable
  * its own WDT via ulmk_board_cpu_wdt_disable_self().
  */

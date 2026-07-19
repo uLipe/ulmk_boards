@@ -301,13 +301,29 @@ REQ7) get edge IRQs from the GPIO IRQ thread (`SRC_SCUERU0` / EIFR).
 Order: baseline → e2e → unit → edge/fault suites → lifecycle/IRQ suites → stress → wcet → smp_smoke.  Blinky is the BSP demo (not a cert gate).
 Expect `SILICON_*: PASS` in the RAM log; blinky smoke looks for `led1=`.
 
-SMP HIL (CPU0+CPU1):
+SMP HIL (CPU0+CPU1+CPU2):
 
 ```bash
 python3 tools/dev.py build --board ../ulmk_boards/tc275_lite --clean \
   --enable-smp --no-components --component silicon_smp_smoke
 bash ../ulmk_boards/tc275_lite/scripts/hil-silicon-smp-smoke.sh \
   ../build/ulipe-tricore-tc275_lite/ulmk
+```
+
+```bash
+# Three hello threads (one per core)
+python3 tools/dev.py build --board ../ulmk_boards/tc275_lite --clean \
+  --enable-smp --no-components --component smp_console_3cpu
+ULMK_HIL_SERIAL=/dev/ttyUSB1 \
+  ../ulmk_boards/tc275_lite/scripts/hil-serial-capture.sh \
+  ../build/ulipe-tricore-tc275_lite/ulmk 'on CPU0|on CPU1|on CPU2' 20
+
+# TPS pot → complementary LED PWM via CPU2 server
+python3 tools/dev.py build --board ../ulmk_boards/tc275_lite --clean \
+  --enable-smp --no-components --component smp_tps_pwm
+ULMK_HIL_SERIAL=/dev/ttyUSB1 \
+  ../ulmk_boards/tc275_lite/scripts/hil-serial-capture.sh \
+  ../build/ulipe-tricore-tc275_lite/ulmk 'CPU2 servo|CPU0 req|CPU1 req' 25
 ```
 
 ```bash
