@@ -8,10 +8,10 @@
 #include <ulmk/linker.h>
 #include <gpio.h>
 #include "board_config.h"
+#include "board_console.h"
 #include "board_leds.h"
 
 void board_services_init(const ulmk_boot_info_t *info);
-void board_console_puts(const char *s);
 void board_timer_sleep_us(uint32_t us);
 
 #define GPIO_N		0u

@@ -1,10 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /*
  * board_i2c_scanner — Zephyr-style 7-bit I2C address scan on I2C0.
- *
- * Probes 0x01..0x7F with an address-only write (ACK = device present).
- * Transfer deadline is policy here (board_timer), not in the I2C driver:
- * a worker thread runs i2c_probe; the scanner races it against a timeout.
  */
 
 #include <stdint.h>
@@ -12,10 +8,9 @@
 #include <ulmk/linker.h>
 #include <i2c.h>
 #include "board_config.h"
+#include "board_console.h"
 
 void board_services_init(const ulmk_boot_info_t *info);
-void board_console_puts(const char *s);
-void board_console_putc(char c);
 void board_timer_sleep_us(uint32_t us);
 
 #define I2C_NODE		0u
@@ -31,30 +26,10 @@ static ulmk_notif_t g_req_notif __attribute__((section(".user_bss")));
 
 static void put_hex2(uint8_t v)
 {
-	uint8_t n;
+	static const char hex[] = "0123456789abcdef";
 
-	n = (uint8_t)(v >> 4);
-	board_console_putc((char)(n < 10u ? ('0' + n) : ('a' + (n - 10u))));
-	n = (uint8_t)(v & 0xFu);
-	board_console_putc((char)(n < 10u ? ('0' + n) : ('a' + (n - 10u))));
-}
-
-static void put_u32(uint32_t v)
-{
-	char buf[10];
-	uint32_t i = 0u;
-	uint32_t n = v;
-
-	if (n == 0u) {
-		board_console_putc('0');
-		return;
-	}
-	while (n > 0u && i < sizeof(buf)) {
-		buf[i++] = (char)('0' + (n % 10u));
-		n /= 10u;
-	}
-	while (i > 0u)
-		board_console_putc(buf[--i]);
+	board_console_putc(hex[(v >> 4) & 0xFu]);
+	board_console_putc(hex[v & 0xFu]);
 }
 
 static void probe_worker(void *arg)
@@ -104,7 +79,8 @@ void ulmk_root_thread(const ulmk_boot_info_t *info)
 	board_services_init(info);
 
 	board_console_puts("\r\n");
-	board_console_puts("ulmk: TC275 Lite I2C scanner (I2C0 P15.4/P15.5)\r\n");
+	board_console_puts(
+		"ulmk: TC275 Lite I2C scanner (I2C0 P15.4/P15.5)\r\n");
 
 	tid = i2c_init(I2C_NODE, ULMK_BOARD_I2C0_BITRATE_HZ);
 	if (tid == ULMK_TID_INVALID) {
@@ -130,7 +106,8 @@ void ulmk_root_thread(const ulmk_boot_info_t *info)
 		ulmk_thread_exit();
 	}
 
-	board_console_puts("     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f\r\n");
+	board_console_puts(
+		"     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f\r\n");
 
 	found = 0u;
 	bus_dead = 0;
@@ -153,10 +130,6 @@ void ulmk_root_thread(const ulmk_boot_info_t *info)
 				found++;
 			} else if (rc == ULMK_ETIMEOUT) {
 				board_console_puts("TO ");
-				/*
-				 * Worker is blocked in the I2C server; further
-				 * probes cannot complete until the bus wakes.
-				 */
 				bus_dead = 1;
 			} else {
 				board_console_puts("-- ");
@@ -167,9 +140,7 @@ void ulmk_root_thread(const ulmk_boot_info_t *info)
 			board_console_puts("\r\n");
 	}
 
-	board_console_puts("found ");
-	put_u32(found);
-	board_console_puts(" device(s)\r\n");
+	board_console_printf("found %u device(s)\r\n", found);
 
 	for (;;)
 		ulmk_thread_yield();

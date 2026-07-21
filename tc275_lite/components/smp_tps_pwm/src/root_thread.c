@@ -6,8 +6,7 @@
  *   CPU0  client: duty LED1 PWM rises with TPS (throttle body bank A)
  *   CPU1  client: duty LED2 PWM falls with TPS (complementary bank B)
  *
- * ADC/PWM driver bring-up stays on CPU0 (root); secondaries only use the
- * client APIs.  That avoids driver-init races when affinity is not CPU0.
+ * Console lines are atomic via board_console_printf (console IPC server).
  *
  * Build: --enable-smp --component smp_tps_pwm
  * UART:  often /dev/ttyUSB1 when USB0 is an ESP adapter.
@@ -19,10 +18,9 @@
 #include <adc.h>
 #include <pwm.h>
 #include "board_config.h"
+#include "board_console.h"
 
 void board_services_init(const ulmk_boot_info_t *info);
-void board_console_puts(const char *s);
-void board_console_putc(char c);
 void board_timer_sleep_us(uint32_t us);
 
 #define ADC_MOD		0u
@@ -36,40 +34,7 @@ void board_timer_sleep_us(uint32_t us);
 #define MSG_READ_TPS	1u
 
 static ULMK_PRIVATE volatile ulmk_ep_t g_tps_ep;
-static ULMK_PRIVATE volatile uint32_t g_print_lock;
 static ULMK_PRIVATE volatile uint32_t g_server_ready;
-
-static void print_lock(void)
-{
-	while (g_print_lock != 0u)
-		ulmk_thread_yield();
-	g_print_lock = 1u;
-	__asm__ volatile("" ::: "memory");
-}
-
-static void print_unlock(void)
-{
-	__asm__ volatile("" ::: "memory");
-	g_print_lock = 0u;
-}
-
-static void put_u32(uint32_t v)
-{
-	char buf[10];
-	uint32_t i = 0u;
-	uint32_t n = v;
-
-	if (n == 0u) {
-		board_console_putc('0');
-		return;
-	}
-	while (n > 0u && i < sizeof(buf)) {
-		buf[i++] = (char)('0' + (n % 10u));
-		n /= 10u;
-	}
-	while (i > 0u)
-		board_console_putc(buf[--i]);
-}
 
 static uint32_t raw_to_duty(uint16_t raw)
 {
@@ -85,11 +50,8 @@ static void thr_tps_server(void *arg)
 	uint16_t raw;
 	int rc;
 
-	print_lock();
-	board_console_puts("smp_tps_pwm: TPS server on CPU");
-	put_u32(ulmk_cpu_id());
-	board_console_puts("\r\n");
-	print_unlock();
+	board_console_printf("smp_tps_pwm: TPS server on CPU%u\r\n",
+			     ulmk_cpu_id());
 
 	g_server_ready = 1u;
 
@@ -111,13 +73,9 @@ static void thr_tps_server(void *arg)
 		reply.words[2] = ulmk_cpu_id();
 		(void)ulmk_ep_reply(sender, &reply);
 
-		print_lock();
-		board_console_puts("smp_tps_pwm: CPU2 servo raw=");
-		put_u32(raw);
-		board_console_puts(" duty=");
-		put_u32(reply.words[1]);
-		board_console_puts("\r\n");
-		print_unlock();
+		board_console_printf(
+			"smp_tps_pwm: CPU2 servo raw=%u duty=%u\r\n",
+			(uint32_t)raw, reply.words[1]);
 	}
 }
 
@@ -134,28 +92,23 @@ static void thr_client(void *arg)
 	cpu = ulmk_cpu_id();
 
 	while (g_server_ready == 0u)
-		ulmk_thread_yield();
+		board_timer_sleep_us(1000u);
 
 	ep = g_tps_ep;
 
-	print_lock();
-	board_console_puts("smp_tps_pwm: client on CPU");
-	put_u32(cpu);
-	board_console_puts(led_ch == PWM_CH_LED1 ? " -> LED1 +\r\n" : " -> LED2 -\r\n");
-	print_unlock();
+	board_console_printf(
+		"smp_tps_pwm: client on CPU%u -> LED%u %c\r\n",
+		cpu, led_ch + 1u,
+		led_ch == PWM_CH_LED1 ? '+' : '-');
 
 	for (;;) {
 		msg.label = MSG_READ_TPS;
 		msg.words[0] = cpu;
 		rc = ulmk_ep_call(ep, &msg);
 		if (rc != ULMK_OK) {
-			print_lock();
-			board_console_puts("smp_tps_pwm: CPU");
-			put_u32(cpu);
-			board_console_puts(" ep_call rc=");
-			put_u32((uint32_t)(-rc));
-			board_console_puts("\r\n");
-			print_unlock();
+			board_console_printf(
+				"smp_tps_pwm: CPU%u ep_call rc=%u\r\n",
+				cpu, (uint32_t)(-rc));
 			board_timer_sleep_us(PERIOD_US);
 			continue;
 		}
@@ -164,7 +117,6 @@ static void thr_client(void *arg)
 		if (tps_duty > 1000u)
 			tps_duty = 1000u;
 
-		/* CPU0: open with TPS; CPU1: complementary close. */
 		if (led_ch == PWM_CH_LED1)
 			duty = tps_duty;
 		else
@@ -172,17 +124,9 @@ static void thr_client(void *arg)
 
 		(void)pwm_set_duty((uint8_t)led_ch, duty);
 
-		print_lock();
-		board_console_puts("smp_tps_pwm: CPU");
-		put_u32(cpu);
-		board_console_puts(" req TPS duty=");
-		put_u32(tps_duty);
-		board_console_puts(" set PWM");
-		put_u32(led_ch);
-		board_console_puts("=");
-		put_u32(duty);
-		board_console_puts("\r\n");
-		print_unlock();
+		board_console_printf(
+			"smp_tps_pwm: CPU%u req TPS duty=%u set PWM%u=%u\r\n",
+			cpu, tps_duty, led_ch, duty);
 
 		board_timer_sleep_us(PERIOD_US);
 	}
@@ -195,12 +139,12 @@ void ulmk_root_thread(const ulmk_boot_info_t *info)
 	ulmk_ep_t ep;
 
 	board_services_init(info);
-	g_print_lock = 0u;
 	g_server_ready = 0u;
 	g_tps_ep = ULMK_EP_INVALID;
 
 	board_console_puts("\r\n");
-	board_console_puts("ulmk: smp_tps_pwm (CPU2 ADC TPS / CPU0+CPU1 PWM)\r\n");
+	board_console_puts(
+		"ulmk: smp_tps_pwm (CPU2 ADC TPS / CPU0+CPU1 PWM)\r\n");
 
 	if (ulmk_cpu_id() != 0u) {
 		board_console_puts("smp_tps_pwm: FAIL root not on CPU0\r\n");

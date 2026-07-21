@@ -8,10 +8,9 @@
 #include <ulmk/linker.h>
 #include <pwm.h>
 #include "board_config.h"
+#include "board_console.h"
 
 void board_services_init(const ulmk_boot_info_t *info);
-void board_console_puts(const char *s);
-void board_console_putc(char c);
 void board_timer_sleep_us(uint32_t us);
 
 #define PWM_MOD			0u
@@ -20,24 +19,6 @@ void board_timer_sleep_us(uint32_t us);
 #define PWM_FREQ_HZ		1000u
 #define FADE_STEPS		80u
 #define FADE_STEP_US		50000u
-
-static void put_u32(uint32_t v)
-{
-	char buf[10];
-	uint32_t i = 0u;
-	uint32_t n = v;
-
-	if (n == 0u) {
-		board_console_putc('0');
-		return;
-	}
-	while (n > 0u && i < sizeof(buf)) {
-		buf[i++] = (char)('0' + (n % 10u));
-		n /= 10u;
-	}
-	while (i > 0u)
-		board_console_putc(buf[--i]);
-}
 
 static void fade_pair(uint32_t from, uint32_t to)
 {
@@ -90,9 +71,7 @@ void ulmk_root_thread(const ulmk_boot_info_t *info)
 
 	round = 0u;
 	for (;;) {
-		board_console_puts("fade round ");
-		put_u32(round);
-		board_console_puts("\r\n");
+		board_console_printf("fade round %u\r\n", round);
 		fade_pair(0u, 1000u);
 		fade_pair(1000u, 0u);
 		round++;

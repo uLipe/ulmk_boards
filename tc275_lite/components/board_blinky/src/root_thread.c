@@ -9,11 +9,9 @@
 #include <stddef.h>
 #include <ulmk/microkernel.h>
 #include <ulmk/linker.h>
+#include "board_console.h"
 
 void board_services_init(const ulmk_boot_info_t *info);
-void board_console_putc(char c);
-void board_console_puts(const char *s);
-int board_console_getc(char *out);
 void board_timer_sleep_us(uint32_t us);
 int board_leds_set(uint32_t led, int on);
 int board_leds_get(uint32_t led, int *on);
@@ -45,11 +43,8 @@ static void print_status(void)
 
 	(void)board_leds_get(BOARD_LED_1, &on1);
 	(void)board_leds_get(BOARD_LED_2, &on2);
-	board_console_puts("led1=");
-	board_console_putc(on1 ? '1' : '0');
-	board_console_puts(" led2=");
-	board_console_putc(on2 ? '1' : '0');
-	board_console_puts("\n");
+	board_console_printf("led1=%c led2=%c\n",
+			     on1 ? '1' : '0', on2 ? '1' : '0');
 }
 
 static void shell_exec(void)
