@@ -9,8 +9,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ELF="${1:-}"
 VERBOSE="${ULMK_FLASH_VERBOSE:-0}"
 VERIFY="${ULMK_FLASH_VERIFY:-0}"
-# Wall-clock budget for the program phase (TAS is slow even with burst).
-FLASH_TIMEOUT="${ULMK_FLASH_TIMEOUT:-90}"
+# Wall-clock budget for the program phase (TAS; ~15s for 64 KiB with burst).
+FLASH_TIMEOUT="${ULMK_FLASH_TIMEOUT:-60}"
 
 # shellcheck source=/dev/null
 source "$(dirname "$0")/aurix-env.sh"

@@ -1,17 +1,71 @@
 diff --git a/src/jtag/drivers/tas_client/tas_client.c b/src/jtag/drivers/tas_client/tas_client.c
-index 55294d6..c29d921 100644
+index 55294d6..d9c7c84 100644
 --- a/src/jtag/drivers/tas_client/tas_client.c
 +++ b/src/jtag/drivers/tas_client/tas_client.c
-@@ -98,7 +98,7 @@ static int tas_client_reset(int trst, int srst) {
-   }
-   if (srst) {
-     return tas_client_device_connect(client_state.sock,
--                                     TAS_DEV_CON_FEAT_RESET_AND_HALT);
-+                                     TAS_DEV_CON_FEAT_RESET);
-   }
+@@ -149,12 +149,22 @@ static int tas_client_op_run(struct aurix_ocds *ocds) {
+         pl0_size += sizeof(tas_pl0rq_rdblk_st);
+       }
+     } else {
+-      if (req->cmd < TAS_PL0_CMD_WRBLK) {
++      if (req->cmd == TAS_PL0_CMD_WR64) {
++        tas_pl0rq_wr64_st write_addr = {
++            .wl = 2,
++            .cmd = req->cmd,
++            .a15to0 = req->addr & 0xFFFF,
++        };
++        memcpy(write_addr.data, &req->data, sizeof(write_addr.data));
++        memcpy(pl0_buffer + pl0_size / sizeof(uint32_t), &write_addr,
++               sizeof(tas_pl0rq_wr64_st));
++        pl0_size += sizeof(tas_pl0rq_wr64_st);
++      } else if (req->cmd < TAS_PL0_CMD_WRBLK) {
+         tas_pl0rq_wr_st write_addr = {
+             .wl = 1,
+             .cmd = req->cmd,
+             .a15to0 = req->addr & 0xFFFF,
+-            .data = req->data,
++            .data = (uint32_t)req->data,
+         };
+         memcpy(pl0_buffer + pl0_size / sizeof(uint32_t), &write_addr,
+                sizeof(tas_pl0rq_wr_st));
+@@ -299,6 +309,28 @@ static int tas_client_op_queue_soc_write(struct aurix_ocds *ocds, uint32_t addr,
+                                       .cmd = TAS_PL0_CMD_WRBLK,
+                                       .buffer = (void *)buffer};
+     }
++  } else if (size == 8) {
++    uint32_t i;
++
++    for (i = 0; i < count; i++) {
++      uint64_t data;
++
++      if (client_state.con_queues[ocds->con_id].reqs_count >=
++          client_state.con_queues[ocds->con_id].reqs_size) {
++        int ret = tas_client_op_run(ocds);
++        if (ret) {
++          return ret;
++        }
++      }
++
++      memcpy(&data, (const uint8_t *)buffer + i * 8, 8);
++      client_state.con_queues[ocds->con_id]
++          .reqs[client_state.con_queues[ocds->con_id].reqs_count++] =
++          (struct tas_client_pl0_req){.addr = addr,
++                                      .count = 1,
++                                      .cmd = TAS_PL0_CMD_WR64,
++                                      .data = data};
++    }
+   } else {
+     uint32_t i;
+     for (i = 0; i < count; i++) {
+@@ -312,7 +344,7 @@ static int tas_client_op_queue_soc_write(struct aurix_ocds *ocds, uint32_t addr,
+         }
+       }
  
-   return 0;
-@@ -342,6 +342,12 @@ static int tas_client_op_connect(struct aurix_ocds *ocds) {
+-      memcpy(&data, buffer, size);
++      memcpy(&data, (const uint8_t *)buffer + i * size, size);
+       client_state.con_queues[ocds->con_id]
+           .reqs[client_state.con_queues[ocds->con_id].reqs_count++] =
+           (struct tas_client_pl0_req){.addr = addr,
+@@ -342,6 +374,12 @@ static int tas_client_op_connect(struct aurix_ocds *ocds) {
      }
    }
  

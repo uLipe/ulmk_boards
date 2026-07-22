@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "target/aurix/aurix.h"
 #include "target/aurix/aurix_ocds.h"
@@ -12,6 +13,7 @@
 #include <flash/nor/core.h>
 #include <flash/nor/driver.h>
 #include <helper/log.h>
+#include <helper/time_support.h>
 #include <target/target.h>
 
 #define SCU_CHIPID		0xF0036140
@@ -21,6 +23,8 @@
 #define TC3XX_HF_ERRSR		0xF8040034
 #define TC3XX_PHYS_ALIGN	64
 #define TC3XX_BUSY_BIT		2
+#define TC3XX_BURST_LEN		256u
+#define TC3XX_WRITE_BURST_CMD	0xA6u	/* TC3xx UM Write Burst */
 
 #define TC2XX_HF_STATUS		0xF8002010
 #define TC2XX_HF_ERRSR		0xF8002034
@@ -30,6 +34,18 @@
 #define TC2XX_PHYS_ALIGN	16
 #define TC2XX_BUSY_BIT		2
 #define TC2XX_PFPAGE_BIT	21
+#define TC2XX_PAGE_LEN		32u
+/* iLLD IfxFlash_cfg.h IFXFLASH_PFLASH_BURST_LENGTH */
+#define TC2XX_BURST_LEN		256u
+/* iLLD IfxFlash_writeBurst: final AAA8 word is 0x7A (NOT TC3xx 0xA6). */
+#define TC2XX_WRITE_BURST_CMD	0x7Au
+#define TC2XX_WRITE_PAGE_CMD	0xAAu
+
+/*
+ * TAS round-trips dominate program time (~1–2 ms each).  Host-side sleep
+ * between HF_STATUS polls lets the flash FSM finish without hammering DAP.
+ */
+#define TC3XX_POLL_SLEEP_MS	1
 
 struct tc3xx_flash_bank {
 	bool probed;
@@ -95,7 +111,7 @@ static int tc3xx_poll_busy_clear(struct aurix_ocds *ocds, struct tc3xx_flash_ban
 	int err;
 	unsigned int tries;
 
-	for (tries = 0; tries < 1000000; tries++) {
+	for (tries = 0; tries < 5000; tries++) {
 		err = aurix_ocds_queue_soc_read_u32(ocds, bank->hf_status, &flash_busy);
 		if (err)
 			return err;
@@ -105,6 +121,8 @@ static int tc3xx_poll_busy_clear(struct aurix_ocds *ocds, struct tc3xx_flash_ban
 
 		if (!(flash_busy & (1u << bank->busy_bit)))
 			return ERROR_OK;
+
+		alive_sleep(TC3XX_POLL_SLEEP_MS);
 	}
 
 	LOG_ERROR("flash poll: timeout HF_STATUS=0x%08" PRIx32, flash_busy);
@@ -117,7 +135,7 @@ static int tc3xx_poll_page_mode(struct aurix_ocds *ocds, struct tc3xx_flash_bank
 	int err;
 	unsigned int tries;
 
-	for (tries = 0; tries < 1000000; tries++) {
+	for (tries = 0; tries < 5000; tries++) {
 		err = aurix_ocds_queue_soc_read_u32(ocds, bank->hf_status, &flash_status);
 		if (err)
 			return err;
@@ -127,6 +145,8 @@ static int tc3xx_poll_page_mode(struct aurix_ocds *ocds, struct tc3xx_flash_bank
 
 		if (flash_status & (1u << TC2XX_PFPAGE_BIT))
 			return ERROR_OK;
+
+		alive_sleep(TC3XX_POLL_SLEEP_MS);
 	}
 
 	LOG_ERROR("flash poll: page mode timeout HF_STATUS=0x%08" PRIx32, flash_status);
@@ -143,7 +163,7 @@ static int tc3xx_poll_done(struct aurix_ocds *ocds, struct tc3xx_flash_bank *ban
 	int err;
 	unsigned int tries;
 
-	for (tries = 0; tries < 1000000; tries++) {
+	for (tries = 0; tries < 5000; tries++) {
 		err = aurix_ocds_queue_soc_read_u32(ocds, bank->hf_errsr, &flash_err);
 		if (err)
 			return err;
@@ -158,6 +178,8 @@ static int tc3xx_poll_done(struct aurix_ocds *ocds, struct tc3xx_flash_bank *ban
 			break;
 		if (!(flash_busy & (1u << bank->busy_bit)))
 			return ERROR_OK;
+
+		alive_sleep(TC3XX_POLL_SLEEP_MS);
 	}
 
 	if (flash_err) {
@@ -295,34 +317,63 @@ err:
 	return ERROR_FLASH_OPERATION_FAILED;
 }
 
-static int tc3xx_write_page(struct flash_bank *bank, struct aurix_ocds *ocds,
-			      const uint8_t *buffer, uint32_t offset,
-			      uint32_t page_len)
+static int tc3xx_load_assembly(struct aurix_ocds *ocds, const uint8_t *buffer,
+			       uint32_t len, uint32_t capacity)
 {
-	struct tc3xx_flash_bank *tc3xx_bank = bank->driver_priv;
 	uint32_t i;
 	int err;
 
-	err = aurix_ocds_queue_soc_write_u32(ocds, 0xAF005554, 0x50);
-	if (err)
-		return err;
-	err = aurix_ocds_run(ocds);
-	if (err)
-		return err;
-	err = tc3xx_poll_busy_clear(ocds, tc3xx_bank);
-	if (err)
-		return err;
+	/*
+	 * iLLD IfxFlash_loadPage: one 64-bit store at 0xAF0055F0 loads a
+	 * (wordL, wordU) pair into the assembly buffer.  Prefer WR64 over
+	 * two WR32 to cut TAS PL0 ops in half.
+	 */
+	for (i = 0; i < capacity; i += 8) {
+		uint64_t data = 0xFFFFFFFFFFFFFFFFull;
+		uint32_t chunk = MIN(8u, capacity - i);
 
-	for (i = 0; i < 32; i += 4) {
-		uint32_t data = 0xFFFFFFFF;
+		if (i < len) {
+			uint32_t copy = MIN(chunk, len - i);
 
-		if (i < page_len)
-			memcpy(&data, buffer + i, MIN(4u, page_len - i));
-		err = aurix_ocds_queue_soc_write_u32(ocds,
-				0xAF0055F0 + ((i % 8) == 0 ? 0 : 4), data);
+			data = 0;
+			memcpy(&data, buffer + i, copy);
+			if (copy < 8)
+				memset((uint8_t *)&data + copy, 0xFF, 8 - copy);
+		}
+		err = aurix_ocds_queue_soc_write(ocds, 0xAF0055F0, 8, 1, &data);
 		if (err)
 			return err;
 	}
+	return ERROR_OK;
+}
+
+/*
+ * Enter Page Mode → Load Page → Write Page/Burst.
+ *
+ * TC2xx Write Burst final opcode is 0x7A (iLLD IfxFlash_writeBurst).
+ * An earlier attempt used the TC3xx opcode 0xA6 on TC275 and left PFlash
+ * unreadable over OCDS — that was the wrong command, not “burst is unsafe”.
+ */
+static int tc3xx_program_chunk(struct flash_bank *bank, struct aurix_ocds *ocds,
+			       const uint8_t *buffer, uint32_t offset,
+			       uint32_t len, uint32_t capacity, uint32_t write_cmd)
+{
+	struct tc3xx_flash_bank *tc3xx_bank = bank->driver_priv;
+	int err;
+
+	/*
+	 * Queue Enter Page Mode + Load Page + Write in one OCDS run.
+	 * Splitting enter/load across TAS round-trips was ~2× slower and the
+	 * intermediate PFPAGE poll never latches over OCDS anyway.  Host sleep
+	 * after the run covers flash FSM latency before status poll.
+	 */
+	err = aurix_ocds_queue_soc_write_u32(ocds, 0xAF005554, 0x50);
+	if (err)
+		return err;
+
+	err = tc3xx_load_assembly(ocds, buffer, len, capacity);
+	if (err)
+		return err;
 
 	err = aurix_ocds_queue_soc_write_u32(ocds, 0xAF00AA50,
 			tc3xx_flash_addr(bank, tc3xx_bank, offset));
@@ -334,13 +385,16 @@ static int tc3xx_write_page(struct flash_bank *bank, struct aurix_ocds *ocds,
 	err = aurix_ocds_queue_soc_write_u32(ocds, 0xAF00AAA8, 0xA0);
 	if (err)
 		return err;
-	err = aurix_ocds_queue_soc_write_u32(ocds, 0xAF00AAA8, 0xAA);
+	err = aurix_ocds_queue_soc_write_u32(ocds, 0xAF00AAA8, write_cmd);
 	if (err)
 		return err;
 
 	err = aurix_ocds_run(ocds);
 	if (err)
 		return err;
+
+	/* Burst program on TC27x is typically <1 ms; give the FSM a head start. */
+	alive_sleep(capacity >= 256u ? 6 : 2);
 
 	return tc3xx_poll_done(ocds, tc3xx_bank);
 }
@@ -363,59 +417,40 @@ static int tc3xx_write(struct flash_bank *bank, const uint8_t *buffer,
 	}
 
 	while (page_offset < count) {
-		uint32_t chunk = MIN(32u, count - page_offset);
+		uint32_t remain = count - page_offset;
+		uint32_t addr = offset + page_offset;
 
-		/*
-		 * TC3xx: hardware burst (256 B / cmd 0xA6).
-		 * TC2xx: 32 B page writes only (cmd 0xAA).  Enabling the TC3xx
-		 * burst sequence on TC275 left PFlash unreadable over OCDS and
-		 * cold-boot trapped in class 3 — do not re-enable without a
-		 * verified TC27x burst path + readback.
-		 */
-		if (!tc3xx_bank->tc2xx && (count - page_offset) >= 256 &&
-		    (((offset + page_offset) & 0xFFu) == 0u)) {
-			uint32_t i;
-
-			err = aurix_ocds_queue_soc_write_u32(ocds, 0xAF005554, 0x50);
+		if (tc3xx_bank->tc2xx && remain >= TC2XX_BURST_LEN &&
+		    (addr & (TC2XX_BURST_LEN - 1u)) == 0u) {
+			err = tc3xx_program_chunk(bank, ocds, buffer + page_offset,
+						  addr, TC2XX_BURST_LEN,
+						  TC2XX_BURST_LEN,
+						  TC2XX_WRITE_BURST_CMD);
 			if (err)
 				goto err;
-			for (i = 0; i < 256; i += 4) {
-				uint32_t data;
-
-				memcpy(&data, buffer + page_offset + i, 4);
-				err = aurix_ocds_queue_soc_write_u32(
-					ocds, 0xAF0055F0 + ((i % 8) == 0 ? 0 : 4), data);
-				if (err)
-					goto err;
-			}
-			err = aurix_ocds_queue_soc_write_u32(ocds, 0xAF00AA50,
-							     bank->base + offset + page_offset);
-			if (err)
-				goto err;
-			err = aurix_ocds_queue_soc_write_u32(ocds, 0xAF00AA58, 0);
-			if (err)
-				goto err;
-			err = aurix_ocds_queue_soc_write_u32(ocds, 0xAF00AAA8, 0xA0);
-			if (err)
-				goto err;
-			err = aurix_ocds_queue_soc_write_u32(ocds, 0xAF00AAA8, 0xA6);
-			if (err)
-				goto err;
-			err = aurix_ocds_run(ocds);
-			if (err)
-				goto err;
-			err = tc3xx_poll_done(ocds, tc3xx_bank);
-			if (err)
-				goto err;
-			page_offset += 256;
+			page_offset += TC2XX_BURST_LEN;
 			continue;
 		}
 
-		err = tc3xx_write_page(bank, ocds, buffer + page_offset,
-				       offset + page_offset, chunk);
+		if (!tc3xx_bank->tc2xx && remain >= TC3XX_BURST_LEN &&
+		    (addr & (TC3XX_BURST_LEN - 1u)) == 0u) {
+			err = tc3xx_program_chunk(bank, ocds, buffer + page_offset,
+						  addr, TC3XX_BURST_LEN,
+						  TC3XX_BURST_LEN,
+						  TC3XX_WRITE_BURST_CMD);
+			if (err)
+				goto err;
+			page_offset += TC3XX_BURST_LEN;
+			continue;
+		}
+
+		err = tc3xx_program_chunk(bank, ocds, buffer + page_offset, addr,
+					  MIN(TC2XX_PAGE_LEN, remain),
+					  TC2XX_PAGE_LEN,
+					  TC2XX_WRITE_PAGE_CMD);
 		if (err)
 			goto err;
-		page_offset += 32;
+		page_offset += TC2XX_PAGE_LEN;
 	}
 
 	/* Leave command interface in read mode so CPU/OCDS can fetch PFlash. */
