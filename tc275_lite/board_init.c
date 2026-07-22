@@ -232,12 +232,16 @@ static void bsp_enable_console_clocks(void)
 	IfxScuWdt_clearSafetyEndinitInline(pw_sfty);
 	MODULE_ASCLIN0.CLC.U = 0u;
 	MODULE_STM0.CLC.U = 0u;
+	MODULE_STM1.CLC.U = 0u;
+	MODULE_STM2.CLC.U = 0u;
 	__asm__ volatile("dsync" ::: "memory");
 	IfxScuWdt_setSafetyEndinitInline(pw_sfty);
 	IfxScuWdt_setCpuEndinitInline(&MODULE_SCU.WDTCPU[0], pw_cpu);
 
 	wait_clc_enabled((volatile uint32_t *)&MODULE_ASCLIN0.CLC.U);
 	wait_clc_enabled((volatile uint32_t *)&MODULE_STM0.CLC.U);
+	wait_clc_enabled((volatile uint32_t *)&MODULE_STM1.CLC.U);
+	wait_clc_enabled((volatile uint32_t *)&MODULE_STM2.CLC.U);
 }
 
 /*

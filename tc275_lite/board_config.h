@@ -36,6 +36,8 @@
 #define ULMK_BOARD_SRC_SRE_BIT		10u
 #define ULMK_BOARD_SRC_STM0_SR0		0xF0038490u
 #define ULMK_BOARD_SRC_STM0_SR1		0xF0038494u
+#define ULMK_BOARD_SRC_STM1_SR0		0xF0038498u	/* STM1 CMP0 → CPU1 tick */
+#define ULMK_BOARD_SRC_STM2_SR0		0xF00384A0u	/* STM2 CMP0 → CPU2 tick */
 #define ULMK_BOARD_SRC_ASCLIN0_TX	0xF0038080u
 #define ULMK_BOARD_SRC_ASCLIN0_RX	0xF0038084u
 #define ULMK_BOARD_SRC_VADC_G0_SR0	0xF0038980u
@@ -44,12 +46,17 @@
 /* SCU ERU OGU0 → SRC_SCUERU0 (gpio_subscribe edge IRQ) */
 #define ULMK_BOARD_SRC_SCU_ERU0		0xF0038CD4u
 /*
- * GPSR soft IRQ — one SR0 node per core group (iLLD SRC_GPSR00/10/20).
- * Program TOS to that same CPU; SETR triggers the IPI.
+ * GPSR software IRQ — one SR0 node per core group (iLLD SRC_GPSR00/10/20).
+ * TC27x UM §16.5: trigger ONLY via SRC.SETR or INT_SRBx[y] (y=SR index).
+ * Program SRC.TOS to the target CPU, SRE=1, then SETR and/or SRB TRIGy.
  */
 #define ULMK_BOARD_SRC_GPSR00		0xF0039000u	/* GPSR0 group → CPU0 */
 #define ULMK_BOARD_SRC_GPSR10		0xF0039020u	/* GPSR1 group → CPU1 */
 #define ULMK_BOARD_SRC_GPSR20		0xF0039040u	/* GPSR2 group → CPU2 */
+/* Service Request Broadcast — INT_SRB0/1/2 (iLLD IfxInt_reg.h) */
+#define ULMK_BOARD_INT_SRB0		0xF0037010u
+#define ULMK_BOARD_INT_SRB1		0xF0037014u
+#define ULMK_BOARD_INT_SRB2		0xF0037018u
 
 /*
  * Secondary CPU program counter + debug halt — iLLD TC27D IfxCpu_reg.h.
@@ -73,9 +80,11 @@
 #define ULMK_BOARD_IRQ_IPI		8u	/* GPSR soft resched */
 #define ULMK_BOARD_IRQ_GPIO_ERU		9u	/* SCU ERU0 */
 
-/* ── Timer peripheral (STM0, Core 0) — IfxStm_reg.h MODULE_STM0 ─────────── */
+/* ── Timer peripheral — one STM per core (IfxStm_reg.h MODULE_STMx) ─────── */
 
 #define ULMK_BOARD_STM0_BASE		0xF0000000u
+#define ULMK_BOARD_STM1_BASE		0xF0000100u
+#define ULMK_BOARD_STM2_BASE		0xF0000200u
 /* fSTM follows fSPB; with PLL@200 MHz and SPB div=2 → 100 MHz. */
 #define ULMK_BOARD_FSTM_HZ		100000000u
 
@@ -187,9 +196,8 @@
 /* ── Arch / kernel quirks ──────────────────────────────────────────────── */
 
 /*
- * UP: WAIT.  SMP GPSR IPI + WAIT quirk is handled in arch/tricore
- * (ulmk_arch_cpu_idle) — board_config must not #if on kernel config
- * (platform.h is a raw snapshot; ENABLE_SMP is not visible here alone).
+ * UP: WAIT.  SMP: arch idle uses NOP so GPSR/STM IRQs are taken without
+ * relying on WAIT wakeup (see ulmk_arch_cpu_idle).
  */
 #define ULMK_BOARD_IDLE_IS_WAIT		1
 #define ULMK_BOARD_MPU_NUM_DPR		18
