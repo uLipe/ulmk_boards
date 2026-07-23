@@ -5,6 +5,12 @@
 set(UL_BOARD_ARCH "tricore")
 set(ULMK_BOARD_CPU  "tc27xx")
 
+# Sample kit ships irq_attach demos — default ON here (global default is OFF).
+# Override with -DULMK_CONFIG_IRQ_ATTACH=0.  Enabling opens a trusted ISR path
+# into userspace; that is an intentional kernel aperture owned by the product.
+set(ULMK_CONFIG_IRQ_ATTACH 1 CACHE STRING
+	"Enable ulmk_irq_attach (0=off/ENOTSUP, 1=DANGEROUS ISR userspace callbacks)")
+
 if(DEFINED CMAKE_C_FLAGS)
     string(REGEX REPLACE " -mcpu=[^ ]+" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
     string(REGEX REPLACE " -mcpu=[^ ]+" "" CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS}")

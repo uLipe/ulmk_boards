@@ -79,6 +79,7 @@
 #define ULMK_BOARD_IRQ_I2C0_P		7u
 #define ULMK_BOARD_IRQ_IPI		8u	/* GPSR soft resched */
 #define ULMK_BOARD_IRQ_GPIO_ERU		9u	/* SCU ERU0 */
+#define ULMK_BOARD_IRQ_STM1_ATTACH	12u	/* STM1 CMP0 attach blinky (UP) */
 
 /* ── Timer peripheral — one STM per core (IfxStm_reg.h MODULE_STMx) ─────── */
 
