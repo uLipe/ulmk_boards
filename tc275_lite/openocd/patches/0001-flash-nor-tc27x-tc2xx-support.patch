@@ -1,5 +1,5 @@
 diff --git a/src/flash/nor/tc3xx.c b/src/flash/nor/tc3xx.c
-index fcb766a..f326627 100644
+index fcb766a..30f4bac 100644
 --- a/src/flash/nor/tc3xx.c
 +++ b/src/flash/nor/tc3xx.c
 @@ -5,6 +5,7 @@
@@ -10,7 +10,7 @@ index fcb766a..f326627 100644
  
  #include "target/aurix/aurix.h"
  #include "target/aurix/aurix_ocds.h"
-@@ -12,294 +13,492 @@
+@@ -12,294 +13,500 @@
  #include <flash/nor/core.h>
  #include <flash/nor/driver.h>
  #include <helper/log.h>
@@ -503,10 +503,14 @@ index fcb766a..f326627 100644
 +	if (err)
 +		return err;
 +
-+	/* Burst program on TC27x is typically <1 ms; give the FSM a head start. */
-+	alive_sleep(capacity >= 256u ? 6 : 2);
++	/*
++	 * Skip per-burst HF_STATUS poll (each is a full TAS PL0 RTT).
++	 * Burst program is sub-ms on TC27x; a short host sleep is enough
++	 * before the next enter/load.  One poll runs at end of tc3xx_write.
++	 */
++	alive_sleep(capacity >= 256u ? 1 : 1);
 +
-+	return tc3xx_poll_done(ocds, tc3xx_bank);
++	return ERROR_OK;
  }
  
  static int tc3xx_write(struct flash_bank *bank, const uint8_t *buffer,
@@ -692,6 +696,10 @@ index fcb766a..f326627 100644
 +			goto err;
 +		page_offset += TC2XX_PAGE_LEN;
 +	}
++
++	err = tc3xx_poll_done(ocds, tc3xx_bank);
++	if (err)
++		goto err;
 +
 +	/* Leave command interface in read mode so CPU/OCDS can fetch PFlash. */
 +	if (tc3xx_bank->tc2xx) {

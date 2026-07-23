@@ -393,10 +393,14 @@ static int tc3xx_program_chunk(struct flash_bank *bank, struct aurix_ocds *ocds,
 	if (err)
 		return err;
 
-	/* Burst program on TC27x is typically <1 ms; give the FSM a head start. */
-	alive_sleep(capacity >= 256u ? 6 : 2);
+	/*
+	 * Skip per-burst HF_STATUS poll (each is a full TAS PL0 RTT).
+	 * Burst program is sub-ms on TC27x; a short host sleep is enough
+	 * before the next enter/load.  One poll runs at end of tc3xx_write.
+	 */
+	alive_sleep(capacity >= 256u ? 1 : 1);
 
-	return tc3xx_poll_done(ocds, tc3xx_bank);
+	return ERROR_OK;
 }
 
 static int tc3xx_write(struct flash_bank *bank, const uint8_t *buffer,
@@ -452,6 +456,10 @@ static int tc3xx_write(struct flash_bank *bank, const uint8_t *buffer,
 			goto err;
 		page_offset += TC2XX_PAGE_LEN;
 	}
+
+	err = tc3xx_poll_done(ocds, tc3xx_bank);
+	if (err)
+		goto err;
 
 	/* Leave command interface in read mode so CPU/OCDS can fetch PFlash. */
 	if (tc3xx_bank->tc2xx) {

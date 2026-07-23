@@ -22,7 +22,7 @@ Or via board install script (applies automatically before `make`).
 |-------|---------|---------|
 | `0001-flash-nor-tc27x-tc2xx-support.patch` | `src/flash/nor/tc3xx.c` | TC27x/TC2xx PFlash: HF_STATUS/ERRSR, CBS EndInit, **256 B Write Burst (`0x7A`)**, WR64 assembly load, TAS-friendly poll backoff |
 | `0002-target-aurix-tc2xx-debug-step.patch` | `src/target/aurix/aurix.{c,h}` | TC2xx GDB register layout; HW breakpoints on PFlash (TRnEVT); **`aurix_step`** (TR7 trigger); DBGSR poll / running-state fixes |
-| `0003-jtag-tas-client-sole-target.patch` | `src/jtag/drivers/tas_client/tas_client.c` | Lite Kit sole-TAS-target fallback; **PL0 WR64 encode/queue** for flash assembly buffer |
+| `0003-jtag-tas-client-sole-target.patch` | `tas_client.c`, `tas_protocol.c` | Sole-TAS-target fallback; PL0 WR64; **one `send()` per PL0**; larger local queue split at `pl0_max_rw` |
 
 ## Flash performance (TC275 Lite + TAS)
 
@@ -30,10 +30,16 @@ Or via board install script (applies automatically before `make`).
 |--------|-------------------------------|
 | Page-only (32 B / `0xAA`) | ~39 s |
 | Burst 256 B (`0x7A`) + WR64 load + poll sleep | ~15 s |
+| + coalesce PL0 `send()` + skip per-burst status poll | ~14–15 s |
 
-Root cause of the old “burst is unsafe” note: an earlier attempt used the
-**TC3xx** Write Burst opcode (`0xA6`) on TC27x.  iLLD `IfxFlash_writeBurst`
-uses **`0x7A`**.  With the correct opcode + `reset_to_read`, images boot.
+Lite Kit TAS advertises `pl0_max_rw=32` / `max_pl0_payload≈1044` and **enforces**
+the RW cap (37-op packets fail).  A 256 B burst needs 37 RW ops → always
+**2 PL0 round-trips** per burst.  Host syscalls are ~20 ms total; wall time is
+dominated by ~25 ms TAS/DAP RTT × ~500+ PL0s.  Pipelining two PL0s on one TCP
+socket did not help (server is effectively lock-step).
+
+Further cuts need a higher `pl0_max_rw` from TAS/DAS, a different probe path,
+or fewer bursts (not available on TC27x PFlash — 256 B is the HW max).
 
 Rebuild after patch changes:
 

@@ -18,7 +18,8 @@ if ! git diff --quiet HEAD -- \
 	src/flash/nor/tc3xx.c \
 	src/target/aurix/aurix.c \
 	src/target/aurix/aurix.h \
-	src/jtag/drivers/tas_client/tas_client.c; then
+	src/jtag/drivers/tas_client/tas_client.c \
+	src/jtag/drivers/tas_client/tas_protocol.c; then
 	:
 else
 	echo "no local changes vs HEAD — nothing to export" >&2
@@ -30,6 +31,7 @@ git diff HEAD -- src/flash/nor/tc3xx.c \
 git diff HEAD -- src/target/aurix/aurix.c src/target/aurix/aurix.h \
 	> "${PATCH_DIR}/0002-target-aurix-tc2xx-debug-step.patch"
 git diff HEAD -- src/jtag/drivers/tas_client/tas_client.c \
+	src/jtag/drivers/tas_client/tas_protocol.c \
 	> "${PATCH_DIR}/0003-jtag-tas-client-sole-target.patch"
 
 cp src/target/aurix/aurix.c "${PATCH_DIR}/overlays/aurix.c"

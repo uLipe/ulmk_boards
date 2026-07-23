@@ -1,36 +1,436 @@
 diff --git a/src/jtag/drivers/tas_client/tas_client.c b/src/jtag/drivers/tas_client/tas_client.c
-index 55294d6..d9c7c84 100644
+index 55294d6..e498d05 100644
 --- a/src/jtag/drivers/tas_client/tas_client.c
 +++ b/src/jtag/drivers/tas_client/tas_client.c
-@@ -149,12 +149,22 @@ static int tas_client_op_run(struct aurix_ocds *ocds) {
-         pl0_size += sizeof(tas_pl0rq_rdblk_st);
-       }
-     } else {
+@@ -1,6 +1,9 @@
+ #include <arpa/inet.h>
++#include <errno.h>
+ #include <netinet/in.h>
++#include <netinet/tcp.h>
+ #include <string.h>
++#include <sys/param.h>
+ #include <sys/socket.h>
+ 
+ #include "helper/command.h"
+@@ -29,6 +32,7 @@ struct tas_client_con_queue {
+   uint32_t max_pkt_size;
+   uint32_t reqs_count;
+   uint32_t reqs_size;
++  uint32_t pl0_max_rw; /* server limit per PL0 packet */
+   struct tas_client_pl0_req *reqs;
+ };
+ struct tas_client_state {
+@@ -68,6 +72,19 @@ static int tas_client_init(void) {
+     return ERROR_CONNECTION_REJECTED;
+   }
+ 
++  {
++    int one = 1;
++    int buf = 256 * 1024;
++
++    /* Coalesced PL0 frames should hit the wire immediately. */
++    (void)setsockopt(client_state.sock, IPPROTO_TCP, TCP_NODELAY, &one,
++                     sizeof(one));
++    (void)setsockopt(client_state.sock, SOL_SOCKET, SO_SNDBUF, &buf,
++                     sizeof(buf));
++    (void)setsockopt(client_state.sock, SOL_SOCKET, SO_RCVBUF, &buf,
++                     sizeof(buf));
++  }
++
+   if (tas_client_connect(client_state.sock) != 0) {
+     LOG_ERROR("Failed to connect to TAS server");
+     return ERROR_CONNECTION_REJECTED;
+@@ -104,129 +121,211 @@ static int tas_client_reset(int trst, int srst) {
+   return 0;
+ }
+ 
+-static int tas_client_op_run(struct aurix_ocds *ocds) {
+-
+-  uint32_t base_address = 0xFFFFFFFF;
+-  uint32_t i;
+-  uint32_t pl0_buffer[client_state.con_queues[ocds->con_id].max_pkt_size / 4];
+-  size_t pl0_size = 0;
+-
+-  for (i = 0; i < client_state.con_queues[ocds->con_id].reqs_count; i++) {
+-    struct tas_client_pl0_req *req =
+-        &client_state.con_queues[ocds->con_id].reqs[i];
+-
+-    if ((req->addr & 0xFFFF0000) != base_address) {
+-      tas_pl0rq_base_addr32_st base_addr = {
+-          .wl = 0,
+-          .cmd = TAS_PL0_CMD_BASE_ADDR32,
+-          .ba31to16 = req->addr >> 16,
+-      };
+-      memcpy(pl0_buffer + pl0_size / sizeof(uint32_t), &base_addr,
+-             sizeof(tas_pl0rq_base_addr32_st));
+-      pl0_size += sizeof(tas_pl0rq_base_addr32_st);
+-      base_address = req->addr & 0xFFFF0000;
+-    }
+-
+-    if ((req->cmd & 0x1) == 1 || req->cmd == TAS_PL0_CMD_RDBLK) {
+-      if (req->cmd < TAS_PL0_CMD_RDBLK) {
+-        tas_pl0rq_rd_st read_addr = {
+-            .wl = 0,
+-            .cmd = req->cmd,
+-            .a15to0 = req->addr & 0xFFFF,
+-        };
+-        memcpy(pl0_buffer + pl0_size / sizeof(uint32_t), &read_addr,
+-               sizeof(tas_pl0rq_rd_st));
+-        pl0_size += sizeof(tas_pl0rq_rd_st);
+-      } else {
+-        tas_pl0rq_rdblk_st read_addr = {
+-            .wl = 1,
+-            .cmd = req->cmd,
+-            .wlrd = req->count,
+-            .a15to0 = req->addr & 0xFFFF,
+-        };
+-        memcpy(pl0_buffer + pl0_size / sizeof(uint32_t), &read_addr,
+-               sizeof(tas_pl0rq_rdblk_st));
+-        pl0_size += sizeof(tas_pl0rq_rdblk_st);
+-      }
+-    } else {
 -      if (req->cmd < TAS_PL0_CMD_WRBLK) {
-+      if (req->cmd == TAS_PL0_CMD_WR64) {
-+        tas_pl0rq_wr64_st write_addr = {
-+            .wl = 2,
-+            .cmd = req->cmd,
-+            .a15to0 = req->addr & 0xFFFF,
-+        };
-+        memcpy(write_addr.data, &req->data, sizeof(write_addr.data));
-+        memcpy(pl0_buffer + pl0_size / sizeof(uint32_t), &write_addr,
-+               sizeof(tas_pl0rq_wr64_st));
-+        pl0_size += sizeof(tas_pl0rq_wr64_st);
-+      } else if (req->cmd < TAS_PL0_CMD_WRBLK) {
-         tas_pl0rq_wr_st write_addr = {
-             .wl = 1,
-             .cmd = req->cmd,
-             .a15to0 = req->addr & 0xFFFF,
+-        tas_pl0rq_wr_st write_addr = {
+-            .wl = 1,
+-            .cmd = req->cmd,
+-            .a15to0 = req->addr & 0xFFFF,
 -            .data = req->data,
-+            .data = (uint32_t)req->data,
-         };
-         memcpy(pl0_buffer + pl0_size / sizeof(uint32_t), &write_addr,
-                sizeof(tas_pl0rq_wr_st));
-@@ -299,6 +309,28 @@ static int tas_client_op_queue_soc_write(struct aurix_ocds *ocds, uint32_t addr,
-                                       .cmd = TAS_PL0_CMD_WRBLK,
-                                       .buffer = (void *)buffer};
+-        };
+-        memcpy(pl0_buffer + pl0_size / sizeof(uint32_t), &write_addr,
+-               sizeof(tas_pl0rq_wr_st));
+-        pl0_size += sizeof(tas_pl0rq_wr_st);
+-      } else {
+-        tas_pl0rq_wrblk_st write_addr = {
+-            .wl = req->count,
+-            .cmd = req->cmd,
+-            .a15to0 = req->addr & 0xFFFF,
+-        };
+-        memcpy(pl0_buffer + pl0_size / sizeof(uint32_t), &write_addr,
+-               sizeof(tas_pl0rq_wrblk_st));
+-        pl0_size += sizeof(tas_pl0rq_wrblk_st);
+-        memcpy(pl0_buffer + pl0_size / sizeof(uint32_t), req->buffer,
+-               req->count * sizeof(uint32_t));
+-        pl0_size += req->count * 4;
+-      }
+-    }
+-  }
+-
+-  int err =
+-      tas_client_send_pl0(client_state.sock, ocds->con_id, pl0_buffer, pl0_size,
+-                          client_state.con_queues[ocds->con_id].reqs_count);
+-  if (err) {
+-    client_state.con_queues[ocds->con_id].reqs_count = 0;
+-    return err;
+-  }
++static int tas_client_parse_pl0_rsp(struct aurix_ocds *ocds, uint32_t *pl0_buffer,
++				    uint32_t req_off, uint32_t req_n)
++{
++	uint32_t i;
++	size_t pl0_offset = 0;
++
++	for (i = 0; i < req_n; i++) {
++		struct tas_client_pl0_req *req =
++			&client_state.con_queues[ocds->con_id].reqs[req_off + i];
++		tas_pl0rsp_rd_st rsp_rd;
++		tas_pl0rsp_wr_st rsp_wr;
++
++		switch (req->cmd) {
++		case TAS_PL0_CMD_RD8:
++		case TAS_PL0_CMD_RD16:
++		case TAS_PL0_CMD_RD32:
++		case TAS_PL0_CMD_RDBLK:
++		case TAS_PL0_CMD_RDBLK1KB:
++			memcpy(&rsp_rd, pl0_buffer + pl0_offset,
++			       sizeof(tas_pl0rsp_rd_st));
++			pl0_offset++;
++			if (rsp_rd.cmd != req->cmd ||
++			    rsp_rd.err != TAS_PL0_ERR_NO_ERROR ||
++			    rsp_rd.wlrd != req->count)
++				return ERROR_FAIL;
++			{
++				uint32_t size = req->cmd == TAS_PL0_CMD_RD8 ? 1
++						: req->cmd == TAS_PL0_CMD_RD16
++							  ? 2
++							  : 4;
++
++				memcpy(req->buffer, pl0_buffer + pl0_offset,
++				       req->count * size);
++				pl0_offset += (req->count + 3) / 4;
++			}
++			break;
++		case TAS_PL0_CMD_WR8:
++		case TAS_PL0_CMD_WR16:
++		case TAS_PL0_CMD_WR32:
++		case TAS_PL0_CMD_WR64:
++		case TAS_PL0_CMD_WRBLK:
++			memcpy(&rsp_wr, pl0_buffer + pl0_offset,
++			       sizeof(tas_pl0rsp_wr_st));
++			pl0_offset++;
++			if (rsp_wr.cmd != req->cmd ||
++			    rsp_wr.err != TAS_PL0_ERR_NO_ERROR ||
++			    rsp_wr.wlwr !=
++				    (req->count +
++				     (req->cmd == TAS_PL0_CMD_WR64 ? 1 : 0)))
++				return ERROR_FAIL;
++			break;
++		}
++	}
++	return ERROR_OK;
++}
+ 
+-  size_t pl0_offset = 0;
+-  for (i = 0; i < client_state.con_queues[ocds->con_id].reqs_count; i++) {
+-    struct tas_client_pl0_req *req =
+-        &client_state.con_queues[ocds->con_id].reqs[i];
+-    tas_pl0rsp_rd_st rsp_rd;
+-    tas_pl0rsp_wr_st rsp_wr;
+-
+-    switch (req->cmd) {
+-    case TAS_PL0_CMD_RD8:
+-    case TAS_PL0_CMD_RD16:
+-    case TAS_PL0_CMD_RD32:
+-    case TAS_PL0_CMD_RDBLK:
+-    case TAS_PL0_CMD_RDBLK1KB:
+-      memcpy(&rsp_rd, pl0_buffer + pl0_offset, sizeof(tas_pl0rsp_rd_st));
+-      pl0_offset++;
+-      if (rsp_rd.cmd != req->cmd || rsp_rd.err != TAS_PL0_ERR_NO_ERROR ||
+-          rsp_rd.wlrd != req->count) {
+-        client_state.con_queues[ocds->con_id].reqs_count = 0;
+-        return ERROR_FAIL;
+-      }
+-      uint32_t size = req->cmd == TAS_PL0_CMD_RD8    ? 1
+-                      : req->cmd == TAS_PL0_CMD_RD16 ? 2
+-                                                     : 4;
+-      memcpy(req->buffer, pl0_buffer + pl0_offset, req->count * size);
+-      pl0_offset += (req->count + 3) / 4;
+-      break;
+-    case TAS_PL0_CMD_WR8:
+-    case TAS_PL0_CMD_WR16:
+-    case TAS_PL0_CMD_WR32:
+-    case TAS_PL0_CMD_WR64:
+-    case TAS_PL0_CMD_WRBLK:
+-      memcpy(&rsp_wr, pl0_buffer + pl0_offset, sizeof(tas_pl0rsp_wr_st));
+-      pl0_offset++;
+-      if (rsp_wr.cmd != req->cmd || rsp_wr.err != TAS_PL0_ERR_NO_ERROR ||
+-          rsp_wr.wlwr != (req->count + (req->cmd == TAS_PL0_CMD_WR64 ? 1 : 0))) {
+-        client_state.con_queues[ocds->con_id].reqs_count = 0;
+-        return ERROR_FAIL;
+-      }
+-      break;
+-    }
+-  }
++static int tas_client_encode_pl0(struct aurix_ocds *ocds, uint32_t req_off,
++				 uint32_t req_n, uint32_t *pl0_buffer,
++				 size_t *pl0_size_out)
++{
++	uint32_t base_address = 0xFFFFFFFF;
++	uint32_t i;
++	size_t pl0_size = 0;
++	uint32_t max_bytes = client_state.con_queues[ocds->con_id].max_pkt_size;
++
++	for (i = 0; i < req_n; i++) {
++		struct tas_client_pl0_req *req =
++			&client_state.con_queues[ocds->con_id].reqs[req_off + i];
++		size_t need;
++
++		if ((req->addr & 0xFFFF0000) != base_address)
++			need = sizeof(tas_pl0rq_base_addr32_st);
++		else
++			need = 0;
++
++		if ((req->cmd & 0x1) == 1 || req->cmd == TAS_PL0_CMD_RDBLK) {
++			if (req->cmd < TAS_PL0_CMD_RDBLK)
++				need += sizeof(tas_pl0rq_rd_st);
++			else
++				need += sizeof(tas_pl0rq_rdblk_st);
++		} else if (req->cmd == TAS_PL0_CMD_WR64) {
++			need += sizeof(tas_pl0rq_wr64_st);
++		} else if (req->cmd < TAS_PL0_CMD_WRBLK) {
++			need += sizeof(tas_pl0rq_wr_st);
++		} else {
++			need += sizeof(tas_pl0rq_wrblk_st) + req->count * 4;
++		}
++
++		if (pl0_size + need > max_bytes)
++			return ERROR_FAIL;
++
++		if ((req->addr & 0xFFFF0000) != base_address) {
++			tas_pl0rq_base_addr32_st base_addr = {
++				.wl = 0,
++				.cmd = TAS_PL0_CMD_BASE_ADDR32,
++				.ba31to16 = req->addr >> 16,
++			};
++			memcpy(pl0_buffer + pl0_size / sizeof(uint32_t),
++			       &base_addr, sizeof(base_addr));
++			pl0_size += sizeof(base_addr);
++			base_address = req->addr & 0xFFFF0000;
++		}
++
++		if ((req->cmd & 0x1) == 1 || req->cmd == TAS_PL0_CMD_RDBLK) {
++			if (req->cmd < TAS_PL0_CMD_RDBLK) {
++				tas_pl0rq_rd_st read_addr = {
++					.wl = 0,
++					.cmd = req->cmd,
++					.a15to0 = req->addr & 0xFFFF,
++				};
++				memcpy(pl0_buffer + pl0_size / sizeof(uint32_t),
++				       &read_addr, sizeof(read_addr));
++				pl0_size += sizeof(read_addr);
++			} else {
++				tas_pl0rq_rdblk_st read_addr = {
++					.wl = 1,
++					.cmd = req->cmd,
++					.wlrd = req->count,
++					.a15to0 = req->addr & 0xFFFF,
++				};
++				memcpy(pl0_buffer + pl0_size / sizeof(uint32_t),
++				       &read_addr, sizeof(read_addr));
++				pl0_size += sizeof(read_addr);
++			}
++		} else if (req->cmd == TAS_PL0_CMD_WR64) {
++			tas_pl0rq_wr64_st write_addr = {
++				.wl = 2,
++				.cmd = req->cmd,
++				.a15to0 = req->addr & 0xFFFF,
++			};
++			memcpy(write_addr.data, &req->data,
++			       sizeof(write_addr.data));
++			memcpy(pl0_buffer + pl0_size / sizeof(uint32_t),
++			       &write_addr, sizeof(write_addr));
++			pl0_size += sizeof(write_addr);
++		} else if (req->cmd < TAS_PL0_CMD_WRBLK) {
++			tas_pl0rq_wr_st write_addr = {
++				.wl = 1,
++				.cmd = req->cmd,
++				.a15to0 = req->addr & 0xFFFF,
++				.data = (uint32_t)req->data,
++			};
++			memcpy(pl0_buffer + pl0_size / sizeof(uint32_t),
++			       &write_addr, sizeof(write_addr));
++			pl0_size += sizeof(write_addr);
++		} else {
++			tas_pl0rq_wrblk_st write_addr = {
++				.wl = req->count,
++				.cmd = req->cmd,
++				.a15to0 = req->addr & 0xFFFF,
++			};
++			memcpy(pl0_buffer + pl0_size / sizeof(uint32_t),
++			       &write_addr, sizeof(write_addr));
++			pl0_size += sizeof(write_addr);
++			memcpy(pl0_buffer + pl0_size / sizeof(uint32_t),
++			       req->buffer, req->count * sizeof(uint32_t));
++			pl0_size += req->count * 4;
++		}
++	}
++
++	*pl0_size_out = pl0_size;
++	return ERROR_OK;
++}
+ 
+-  client_state.con_queues[ocds->con_id].reqs_count = 0;
+-  return ERROR_OK;
++static int tas_client_op_run(struct aurix_ocds *ocds)
++{
++	struct tas_client_con_queue *q = &client_state.con_queues[ocds->con_id];
++	uint32_t pl0_buffer[q->max_pkt_size / 4];
++	uint32_t off = 0;
++	int err;
++
++	/*
++	 * Server caps RW ops per PL0 (Lite Kit: 32).  Local queue is larger so
++	 * flash can batch a full 256 B burst (37 ops) into one aurix_ocds_run();
++	 * we split into pl0_max_rw-sized packets here.
++	 */
++	while (off < q->reqs_count) {
++		uint32_t n = q->pl0_max_rw ? MIN(q->pl0_max_rw, q->reqs_count - off)
++					   : (q->reqs_count - off);
++		size_t pl0_size = 0;
++
++		err = tas_client_encode_pl0(ocds, off, n, pl0_buffer, &pl0_size);
++		if (err) {
++			q->reqs_count = 0;
++			return err;
++		}
++
++		err = tas_client_send_pl0(client_state.sock, ocds->con_id,
++					  pl0_buffer, pl0_size, n);
++		if (err) {
++			q->reqs_count = 0;
++			return err;
++		}
++
++		err = tas_client_parse_pl0_rsp(ocds, pl0_buffer, off, n);
++		if (err) {
++			q->reqs_count = 0;
++			return err;
++		}
++
++		off += n;
++	}
++
++	q->reqs_count = 0;
++	return ERROR_OK;
+ }
+ 
+ static int tas_client_op_queue_soc_read(struct aurix_ocds *ocds, uint32_t addr,
+@@ -238,19 +337,25 @@ static int tas_client_op_queue_soc_read(struct aurix_ocds *ocds, uint32_t addr,
+ 
+   if (size == 4 && count > 1) {
+     uint32_t i;
++
+     for (i = 0; i < count; i += 256) {
+-      if (client_state.con_queues[ocds->con_id].reqs_count > 0) {
++      uint32_t n = MIN(256u, count - i);
++
++      if (client_state.con_queues[ocds->con_id].reqs_count >=
++          client_state.con_queues[ocds->con_id].reqs_size) {
+         int ret = tas_client_op_run(ocds);
+-        if (ret) {
++
++        if (ret)
+           return ret;
+-        }
+       }
++
+       client_state.con_queues[ocds->con_id]
+           .reqs[client_state.con_queues[ocds->con_id].reqs_count++] =
+-          (struct tas_client_pl0_req){.addr = addr,
+-                                      .count = MIN(256, count - i),
+-                                      .cmd = TAS_PL0_CMD_RDBLK,
+-                                      .buffer = buffer};
++          (struct tas_client_pl0_req){
++              .addr = addr + i * 4,
++              .count = n,
++              .cmd = TAS_PL0_CMD_RDBLK,
++              .buffer = (uint8_t *)buffer + i * 4};
      }
+   } else {
+     uint32_t i;
+@@ -284,20 +389,47 @@ static int tas_client_op_queue_soc_write(struct aurix_ocds *ocds, uint32_t addr,
+ 
+   if (size == 4 && count > 1) {
+     uint32_t i;
++
+     for (i = 0; i < count; i += 256) {
+-      if (client_state.con_queues[ocds->con_id].reqs_count > 0) {
++      uint32_t n = MIN(256u, count - i);
++
++      if (client_state.con_queues[ocds->con_id].reqs_count >=
++          client_state.con_queues[ocds->con_id].reqs_size) {
++        int ret = tas_client_op_run(ocds);
++
++        if (ret)
++          return ret;
++      }
++
++      client_state.con_queues[ocds->con_id]
++          .reqs[client_state.con_queues[ocds->con_id].reqs_count++] =
++          (struct tas_client_pl0_req){
++              .addr = addr + i * 4,
++              .count = n,
++              .cmd = TAS_PL0_CMD_WRBLK,
++              .buffer = (void *)((const uint8_t *)buffer + i * 4)};
++    }
 +  } else if (size == 8) {
 +    uint32_t i;
 +
@@ -39,24 +439,26 @@ index 55294d6..d9c7c84 100644
 +
 +      if (client_state.con_queues[ocds->con_id].reqs_count >=
 +          client_state.con_queues[ocds->con_id].reqs_size) {
-+        int ret = tas_client_op_run(ocds);
-+        if (ret) {
-+          return ret;
-+        }
-+      }
-+
+         int ret = tas_client_op_run(ocds);
+         if (ret) {
+           return ret;
+         }
+       }
+ 
 +      memcpy(&data, (const uint8_t *)buffer + i * 8, 8);
-+      client_state.con_queues[ocds->con_id]
-+          .reqs[client_state.con_queues[ocds->con_id].reqs_count++] =
-+          (struct tas_client_pl0_req){.addr = addr,
+       client_state.con_queues[ocds->con_id]
+           .reqs[client_state.con_queues[ocds->con_id].reqs_count++] =
+           (struct tas_client_pl0_req){.addr = addr,
+-                                      .count = count,
+-                                      .cmd = TAS_PL0_CMD_WRBLK,
+-                                      .buffer = (void *)buffer};
 +                                      .count = 1,
 +                                      .cmd = TAS_PL0_CMD_WR64,
 +                                      .data = data};
-+    }
+     }
    } else {
      uint32_t i;
-     for (i = 0; i < count; i++) {
-@@ -312,7 +344,7 @@ static int tas_client_op_queue_soc_write(struct aurix_ocds *ocds, uint32_t addr,
+@@ -312,7 +444,7 @@ static int tas_client_op_queue_soc_write(struct aurix_ocds *ocds, uint32_t addr,
          }
        }
  
@@ -65,7 +467,7 @@ index 55294d6..d9c7c84 100644
        client_state.con_queues[ocds->con_id]
            .reqs[client_state.con_queues[ocds->con_id].reqs_count++] =
            (struct tas_client_pl0_req){.addr = addr,
-@@ -342,6 +374,12 @@ static int tas_client_op_connect(struct aurix_ocds *ocds) {
+@@ -342,6 +474,12 @@ static int tas_client_op_connect(struct aurix_ocds *ocds) {
      }
    }
  
@@ -78,3 +480,251 @@ index 55294d6..d9c7c84 100644
  out:
    if (target == NULL) {
      LOG_ERROR("No matching target for OCDS %s found", ocds->name);
+@@ -362,8 +500,14 @@ out:
+   client_state.con_queues[ocds->con_id].max_pkt_size =
+       con_info.max_pl2rq_pkt_size - 4 - sizeof(tas_pl1rq_pl0_start_st) -
+       sizeof(tas_pl1rq_pl0_end_st);
+-  client_state.con_queues[ocds->con_id].reqs_size =
+-      MIN(256, con_info.pl0_max_num_rw);
++  /*
++   * Server enforces pl0_max_num_rw per PL0 (Lite Kit: 32).  Keep a larger
++   * local queue so a 256 B flash burst (37 RW) is one aurix_ocds_run();
++   * op_run splits + pipelines PL0 packets at pl0_max_rw.
++   */
++  client_state.con_queues[ocds->con_id].pl0_max_rw =
++      con_info.pl0_max_num_rw ? con_info.pl0_max_num_rw : 32u;
++  client_state.con_queues[ocds->con_id].reqs_size = 256u;
+   client_state.con_queues[ocds->con_id].reqs =
+       malloc(sizeof(struct tas_client_pl0_req) *
+              client_state.con_queues[ocds->con_id].reqs_size);
+@@ -372,6 +516,12 @@ out:
+     return ERROR_FAIL;
+   }
+ 
++  LOG_INFO("TAS %s: max_pl2rq=%u max_pl0_payload=%u pl0_max_rw=%u queue=%u",
++	   target->identifier, con_info.max_pl2rq_pkt_size,
++	   client_state.con_queues[ocds->con_id].max_pkt_size,
++	   client_state.con_queues[ocds->con_id].pl0_max_rw,
++	   client_state.con_queues[ocds->con_id].reqs_size);
++
+   enum reset_types jtag_reset_config = jtag_get_reset_config();
+ 
+   if (jtag_reset_config & RESET_CNCT_UNDER_SRST) {
+diff --git a/src/jtag/drivers/tas_client/tas_protocol.c b/src/jtag/drivers/tas_client/tas_protocol.c
+index d3885f8..5b85cb4 100644
+--- a/src/jtag/drivers/tas_client/tas_protocol.c
++++ b/src/jtag/drivers/tas_client/tas_protocol.c
+@@ -1,5 +1,6 @@
+ #include <stdint.h>
+ #include <stdio.h>
++#include <stdlib.h>
+ #include <string.h>
+ #include <sys/param.h>
+ #include <sys/socket.h>
+@@ -187,85 +188,127 @@ enum {
+   PROTOC_VER = 0 //!< \brief TasPkt protocol version implemented in this class
+ };
+ 
+-static uint16_t pl1_count = 0;
++static uint16_t pl1_count;
++
++static int tas_client_pl0_tx(int sock, uint8_t con_id, const uint32_t *pl0_buffer,
++			     size_t pl0_len, size_t pl0_elements,
++			     uint16_t *pl1_cnt_out)
++{
++	uint32_t packet_size = 4 + sizeof(tas_pl1rq_pl0_start_st) +
++			       sizeof(tas_pl1rq_pl0_end_st) + pl0_len;
++	tas_pl1rq_pl0_start_st rq_start = {
++		.cmd = TAS_PL1_CMD_PL0_START,
++		.wl = 0,
++		.con_id = con_id,
++		.pl0_addr_map_mask = 1,
++		.pl1_cnt = pl1_count++,
++		.protoc_ver = PROTOC_VER,
++	};
++	tas_pl1rq_pl0_end_st rq_end = {
++		.wl = 0, .cmd = TAS_PL1_CMD_PL0_END, .num_pl0_rw = pl0_elements};
++	size_t tx_len = 4 + sizeof(rq_start) + pl0_len + sizeof(rq_end);
++	uint8_t *tx;
++	uint8_t *p;
++
++	tx = malloc(tx_len);
++	if (!tx)
++		return ERROR_FAIL;
++
++	p = tx;
++	memcpy(p, &packet_size, 4);
++	p += 4;
++	memcpy(p, &rq_start, sizeof(rq_start));
++	p += sizeof(rq_start);
++	if (pl0_len) {
++		memcpy(p, pl0_buffer, pl0_len);
++		p += pl0_len;
++	}
++	memcpy(p, &rq_end, sizeof(rq_end));
++
++	if (send(sock, tx, tx_len, 0) != (ssize_t)tx_len) {
++		free(tx);
++		return ERROR_FAIL;
++	}
++	free(tx);
++
++	if (pl1_cnt_out)
++		*pl1_cnt_out = rq_start.pl1_cnt;
++	return ERROR_OK;
++}
+ 
+-struct tas_client_pl0_req {
+-  uint32_t addr;
+-  uint8_t *buffer;
+-  uint8_t cmd;
+-};
++static int tas_client_pl0_rx(int sock, uint16_t pl1_cnt_expect,
++			     uint32_t *pl0_buffer, size_t pl0_buf_bytes)
++{
++	uint32_t packet_size;
++	tas_pl1rsp_pl0_start_st rsp_start;
++	tas_pl1rsp_pl0_end_st rsp_end;
++	size_t rx_need;
++	size_t rx_got;
++	size_t pl0_len;
++	size_t copy_len;
++	uint8_t *rx;
++
++	if (recv(sock, &packet_size, 4, MSG_WAITALL) != 4)
++		return ERROR_FAIL;
++
++	if (packet_size < 4 + sizeof(rsp_start) + sizeof(rsp_end))
++		return ERROR_FAIL;
++
++	rx_need = packet_size - 4;
++	rx = malloc(rx_need);
++	if (!rx)
++		return ERROR_FAIL;
++
++	rx_got = 0;
++	while (rx_got < rx_need) {
++		ssize_t n = recv(sock, rx + rx_got, rx_need - rx_got, 0);
++
++		if (n <= 0) {
++			free(rx);
++			return ERROR_FAIL;
++		}
++		rx_got += (size_t)n;
++	}
++
++	memcpy(&rsp_start, rx, sizeof(rsp_start));
++	if (rsp_start.cmd != TAS_PL1_CMD_PL0_START ||
++	    (rsp_start.err != TAS_PL_ERR_NO_ERROR &&
++	     rsp_start.err != TAS_PL_ERR_PROTOCOL)) {
++		free(rx);
++		return ERROR_FAIL;
++	}
++
++	pl0_len = rx_need - sizeof(rsp_start) - sizeof(rsp_end);
++	copy_len = MIN(pl0_len, pl0_buf_bytes);
++	if (copy_len && pl0_buffer)
++		memcpy(pl0_buffer, rx + sizeof(rsp_start), copy_len);
++
++	memcpy(&rsp_end, rx + sizeof(rsp_start) + pl0_len, sizeof(rsp_end));
++	free(rx);
++
++	if (rsp_end.cmd != TAS_PL1_CMD_PL0_END ||
++	    rsp_end.pl1_cnt != pl1_cnt_expect)
++		return ERROR_FAIL;
++
++	return ERROR_OK;
++}
+ 
+ int tas_client_send_pl0(int sock, uint8_t con_id, uint32_t *pl0_buffer,
+-                        size_t pl0_len, size_t pl0_elements) {
+-
+-  uint32_t packet_size = 4 + sizeof(tas_pl1rq_pl0_start_st) +
+-                         sizeof(tas_pl1rq_pl0_end_st) + pl0_len;
+-  tas_pl1rq_pl0_start_st rq_start = {
+-      .cmd = TAS_PL1_CMD_PL0_START,
+-      .wl = 0,
+-      .con_id = con_id,
+-      .pl0_addr_map_mask = 1,
+-      .pl1_cnt = pl1_count++,
+-      .protoc_ver = PROTOC_VER,
+-
+-  };
+-  tas_pl1rq_pl0_end_st rq_end = {
+-      .wl = 0, .cmd = TAS_PL1_CMD_PL0_END, .num_pl0_rw = pl0_elements};
+-  tas_pl1rsp_pl0_start_st rsp_start;
+-  tas_pl1rsp_pl0_end_st rsp_end;
+-
+-  if (send(sock, &packet_size, 4, MSG_MORE) < 0) {
+-    return ERROR_FAIL;
+-  }
+-  if (send(sock, &rq_start, sizeof(tas_pl1rq_pl0_start_st), MSG_MORE) < 0) {
+-    return ERROR_FAIL;
+-  }
+-  if (send(sock, pl0_buffer, pl0_len, MSG_MORE) < 0) {
+-    return ERROR_FAIL;
+-  }
+-  if (send(sock, &rq_end, sizeof(tas_pl1rq_pl0_end_st), 0) < 0) {
+-    return ERROR_FAIL;
+-  }
+-
+-  if (recv(sock, &packet_size, 4, 0) != 4) {
+-    return ERROR_FAIL;
+-  }
+-  if (recv(sock, &rsp_start, sizeof(tas_pl1rsp_pl0_start_st), 0) < 0) {
+-    return ERROR_FAIL;
+-  }
+-
+-  if (rsp_start.cmd != TAS_PL1_CMD_PL0_START ||
+-      (rsp_start.err != TAS_PL_ERR_NO_ERROR &&
+-       rsp_start.err != TAS_PL_ERR_PROTOCOL)) {
+-    uint8_t buf[packet_size - 4 - sizeof(tas_pl1rsp_pl0_start_st)];
+-    recv(sock, buf, packet_size - 4 - sizeof(tas_pl1rsp_pl0_start_st), 0);
+-    return ERROR_FAIL;
+-  }
+-  pl0_len = packet_size - 4 - sizeof(tas_pl1rsp_pl0_start_st) -
+-            sizeof(tas_pl1rsp_pl0_end_st);
+-  int err = recv(sock, pl0_buffer, MIN(pl0_len, 256 * 4), 0);
+-  if (err < 0) {
+-    return ERROR_FAIL;
+-  };
+-  pl0_len -= err;
+-
+-  /* Don't overflow pl0 buffer in case of error */
+-  while (pl0_len) {
+-    uint8_t buf[1024];
+-    err = recv(sock, buf, MIN(1024, pl0_len), 0);
+-    if (err < 0) {
+-      return ERROR_FAIL;
+-    };
+-    pl0_len -= err;
+-  }
+-
+-  if (recv(sock, &rsp_end, sizeof(tas_pl1rsp_pl0_end_st), 0) < 0) {
+-    return ERROR_FAIL;
+-  }
+-  if (rsp_end.cmd != TAS_PL1_CMD_PL0_END ||
+-      rsp_end.pl1_cnt != rq_start.pl1_cnt) {
+-    return ERROR_FAIL;
+-  }
+-
+-  return ERROR_OK;
++			size_t pl0_len, size_t pl0_elements)
++{
++	uint16_t pl1_cnt;
++	int err;
++
++	/*
++	 * One send() for length + PL0_START + payload + PL0_END.
++	 * The old 4×MSG_MORE path was 4 syscalls per PL0.
++	 */
++	err = tas_client_pl0_tx(sock, con_id, pl0_buffer, pl0_len, pl0_elements,
++				&pl1_cnt);
++	if (err)
++		return err;
++
++	return tas_client_pl0_rx(sock, pl1_cnt, pl0_buffer,
++				 MIN(pl0_len ? pl0_len : (size_t)(256 * 4),
++				     (size_t)(256 * 4)));
+ }
+\ No newline at end of file
