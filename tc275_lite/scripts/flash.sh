@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tc275_lite/scripts/flash.sh — program ulmk.elf over TAS + AURIX OpenOCD.
 #
-# Contract: convert ELF → erase → program → reset + leave runnable → exit.
+# Contract: convert ELF → erase → program → reset run (standalone release) → exit.
 # Never leaves OpenOCD hanging; each phase has a hard timeout.
 set -euo pipefail
 
@@ -9,8 +9,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ELF="${1:-}"
 VERBOSE="${ULMK_FLASH_VERBOSE:-0}"
 VERIFY="${ULMK_FLASH_VERIFY:-0}"
-# Wall-clock budget for the program phase (TAS; ~15s for 64 KiB with burst).
-FLASH_TIMEOUT="${ULMK_FLASH_TIMEOUT:-60}"
+# Wall-clock budget for the program phase (TAS is slow even with burst).
+FLASH_TIMEOUT="${ULMK_FLASH_TIMEOUT:-90}"
 
 # shellcheck source=/dev/null
 source "$(dirname "$0")/aurix-env.sh"
@@ -136,12 +136,12 @@ else
 		"gdb port disabled; init; targets tc27x.cpu0; halt; flash write_image ${HEX} 0; shutdown"
 fi
 
-# Leave the core runnable with WDTs disarmed BEFORE any instruction fetch.
-# Do NOT "reset run" with WDTs still armed: CSA init in startup.S races the
-# default timeout (board_init disables WDT only after CSA + kern_start).
-# Hot-attach: clear HARR/TRn, ENIDIS, disarm WDTCPU0/1/2+WDTS, DBGSR run.
+# Final action MUST be a genuine "reset & run" (TAS FEAT_RESET=0x0001).
+# That leaves OSTATE.OEN=0 so the next button/PORST boots without Halt-After-
+# Reset.  Disable reset-end DAP pokes — they fail mid-reset ("OCDS sequence")
+# and are unnecessary: board_wdt_early.S + board_init handle WDT/EndInit in SW.
 log "  release..."
 run_ocd release 20 \
-	"gdb port disabled; reset_config none separate; init; targets tc27x.cpu0; halt; ulmk_release_run; resume; after 400; shutdown"
+	"gdb port disabled; init; targets tc27x.cpu0; tc27x.cpu0 configure -event reset-end {}; reset run; after 300; shutdown"
 
 log "  flash + start — done"

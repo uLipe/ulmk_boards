@@ -325,8 +325,8 @@ static int tc3xx_load_assembly(struct aurix_ocds *ocds, const uint8_t *buffer,
 
 	/*
 	 * iLLD IfxFlash_loadPage: one 64-bit store at 0xAF0055F0 loads a
-	 * (wordL, wordU) pair into the assembly buffer.  Prefer WR64 over
-	 * two WR32 to cut TAS PL0 ops in half.
+	 * (wordL, wordU) pair.  Safe with enter∥load split + per-chunk poll;
+	 * do not fuse enter into the same OCDS run as these WR64s.
 	 */
 	for (i = 0; i < capacity; i += 8) {
 		uint64_t data = 0xFFFFFFFFFFFFFFFFull;
@@ -351,8 +351,10 @@ static int tc3xx_load_assembly(struct aurix_ocds *ocds, const uint8_t *buffer,
  * Enter Page Mode → Load Page → Write Page/Burst.
  *
  * TC2xx Write Burst final opcode is 0x7A (iLLD IfxFlash_writeBurst).
- * An earlier attempt used the TC3xx opcode 0xA6 on TC275 and left PFlash
- * unreadable over OCDS — that was the wrong command, not “burst is unsafe”.
+ * Enter MUST complete (own OCDS run + busy poll) before load — fusing
+ * enter+load+write into one queue split mid-sequence at pl0_max_rw=32
+ * and corrupted BMHD0 (ESR0 on button reset).  Always poll HF_BUSY after
+ * each chunk; sleep-only overlap also broke BMHD0.
  */
 static int tc3xx_program_chunk(struct flash_bank *bank, struct aurix_ocds *ocds,
 			       const uint8_t *buffer, uint32_t offset,
@@ -361,13 +363,13 @@ static int tc3xx_program_chunk(struct flash_bank *bank, struct aurix_ocds *ocds,
 	struct tc3xx_flash_bank *tc3xx_bank = bank->driver_priv;
 	int err;
 
-	/*
-	 * Queue Enter Page Mode + Load Page + Write in one OCDS run.
-	 * Splitting enter/load across TAS round-trips was ~2× slower and the
-	 * intermediate PFPAGE poll never latches over OCDS anyway.  Host sleep
-	 * after the run covers flash FSM latency before status poll.
-	 */
 	err = aurix_ocds_queue_soc_write_u32(ocds, 0xAF005554, 0x50);
+	if (err)
+		return err;
+	err = aurix_ocds_run(ocds);
+	if (err)
+		return err;
+	err = tc3xx_poll_busy_clear(ocds, tc3xx_bank);
 	if (err)
 		return err;
 
@@ -393,14 +395,9 @@ static int tc3xx_program_chunk(struct flash_bank *bank, struct aurix_ocds *ocds,
 	if (err)
 		return err;
 
-	/*
-	 * Skip per-burst HF_STATUS poll (each is a full TAS PL0 RTT).
-	 * Burst program is sub-ms on TC27x; a short host sleep is enough
-	 * before the next enter/load.  One poll runs at end of tc3xx_write.
-	 */
-	alive_sleep(capacity >= 256u ? 1 : 1);
+	alive_sleep(capacity >= 256u ? 6 : 2);
 
-	return ERROR_OK;
+	return tc3xx_poll_done(ocds, tc3xx_bank);
 }
 
 static int tc3xx_write(struct flash_bank *bank, const uint8_t *buffer,
@@ -456,10 +453,6 @@ static int tc3xx_write(struct flash_bank *bank, const uint8_t *buffer,
 			goto err;
 		page_offset += TC2XX_PAGE_LEN;
 	}
-
-	err = tc3xx_poll_done(ocds, tc3xx_bank);
-	if (err)
-		goto err;
 
 	/* Leave command interface in read mode so CPU/OCDS can fetch PFlash. */
 	if (tc3xx_bank->tc2xx) {
