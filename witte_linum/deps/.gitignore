@@ -1,0 +1,4 @@
+cmsis_device_h7/
+cmsis_core/
+stm32h7xx_hal_driver/
+rtt/

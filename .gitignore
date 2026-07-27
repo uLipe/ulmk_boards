@@ -14,3 +14,9 @@
 
 # Infineon iLLD (clone separately — see tc275_lite/README.md)
 **/deps/illd_tc2x/
+
+# STM32 Cube CMSIS/LL (clone via witte_linum/deps/fetch.sh)
+**/deps/cmsis_device_h7/
+**/deps/cmsis_core/
+**/deps/stm32h7xx_hal_driver/
+**/deps/rtt/
