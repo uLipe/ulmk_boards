@@ -149,10 +149,10 @@ From the **ulmk** repository:
 python3 tools/dev.py
 
 # inside container — enable a component that provides ulmk_root_thread()
-python3 tools/dev.py components enable hello_world ping_pong
+python3 tools/dev.py components enable hello_world
 
 python3 tools/dev.py build --board /workspace/../ulmk_boards/tc275_lite \
-    --component hello_world --component ping_pong
+    --no-components --component hello_world
 ```
 
 On the host (paths relative to your checkout):
@@ -160,7 +160,15 @@ On the host (paths relative to your checkout):
 ```bash
 python3 tools/dev.py build \
     --board ../ulmk_boards/tc275_lite \
-    --component hello_world --component ping_pong
+    --no-components --component hello_world
+```
+
+IPC demo from sibling `ulmk_apps` (alternative image, own ROOT_THREAD):
+
+```bash
+python3 tools/dev.py build \
+    --board ../ulmk_boards/tc275_lite \
+    --no-components --component ping_pong
 ```
 
 Artifact: `build/ulipe-tricore-tc275_lite/ulmk` (exact subdir name follows the
