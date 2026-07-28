@@ -64,16 +64,15 @@ if cb[:10] != b'SEGGER RTT':
     sys.exit(2)
 # aUp[0] @ +0x18: sName, pBuffer, Size, WrOff, RdOff, Flags
 pbuf, size, wroff = struct.unpack_from('<III', cb, 0x1C)
-n = min(wroff if wroff else 0, size, 4096)
-if n == 0:
-    sys.stderr.write('RTT up-buffer empty (WrOff=0)\n')
+if size == 0:
+    sys.stderr.write('RTT up-buffer size 0\n')
     open(out, 'wb').write(b'')
     sys.exit(3)
 script = f"""si SWD
 speed 4000
 connect
 halt
-savebin /tmp/ulmk-rtt-pay.bin 0x{pbuf:08x} {n}
+savebin /tmp/ulmk-rtt-pay.bin 0x{pbuf:08x} {size}
 g
 q
 """
@@ -82,9 +81,20 @@ subprocess.run(
     ['JLinkExe', '-device', 'STM32H753ZI', '-if', 'SWD', '-speed', '4000',
      '-autoconnect', '1', '-CommanderScript', '/tmp/ulmk-rtt-pay.jlink'],
     capture_output=True, check=False)
-pay = open('/tmp/ulmk-rtt-pay.bin', 'rb').read()[:n]
+raw = open('/tmp/ulmk-rtt-pay.bin', 'rb').read()[:size]
+wroff %= size if size else 0
+if wroff == 0:
+    pay = b''
+elif not any(raw[wroff:]):
+    pay = raw[:wroff]
+else:
+    pay = raw[wroff:] + raw[:wroff]
+if not pay:
+    sys.stderr.write('RTT up-buffer empty\n')
+    open(out, 'wb').write(b'')
+    sys.exit(3)
 open(out, 'wb').write(pay)
-print(f'RTT dump: {len(pay)} bytes (WrOff={wroff}, buf=0x{pbuf:08x})')
+print(f'RTT dump: {len(pay)} bytes (WrOff={wroff}, Size={size}, buf=0x{pbuf:08x})')
 PY
 
 echo "===== RTT capture ====="

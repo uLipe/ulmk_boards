@@ -25,6 +25,12 @@
 #define ULMK_ARCH_HAVE_FPU		1
 #endif
 
+/*
+ * Enable Cortex-M7 I+D cache after MPU bring-up (arch_init).  SHARED SDRAM
+ * is Normal WB — clean FB before LTDC present; DMA buffers need clean/inv.
+ */
+#define ULMK_BOARD_ENABLE_CPU_CACHE	1
+
 #ifndef ULMK_ARCH_IDLE_IS_WFI
 #define ULMK_ARCH_IDLE_IS_WFI		1
 #endif
@@ -39,7 +45,8 @@
 #define ULMK_BOARD_FAPB1_HZ		120000000u
 #define ULMK_BOARD_FAPB2_HZ		120000000u
 #define ULMK_BOARD_FUART_HZ		ULMK_BOARD_FAPB2_HZ
-#define ULMK_BOARD_FSTM_HZ		ULMK_BOARD_FCPU_HZ
+/* TIM2 free-run @ 2×PCLK1 = 240 MHz (APB1 prescaler /2). */
+#define ULMK_BOARD_FSTM_HZ		240000000u
 
 /* ── IRQ / NVIC (CMSIS IRQn values) ──────────────────────────────────── */
 
@@ -139,12 +146,29 @@
 #define ULMK_BOARD_ADC_CH_MAX		10u
 #define ULMK_BOARD_ADC1_BASE		0x40022000u
 #define ULMK_BOARD_ADC_MAP_SIZE		0x400u
-#define ULMK_BOARD_DMA1_BASE		0x40020000u
-#define ULMK_BOARD_DMA1_MAP_SIZE	0x800u
 #define ULMK_BOARD_NVIC_ADC		18u	/* ADC_IRQn */
 #define ULMK_BOARD_IRQ_ADC		14u
+
+/* ── DMA1 + DMAMUX (owned by drivers/dma; slots 0..2) ───────────────── */
+#define ULMK_BOARD_DMA1_BASE		0x40020000u
+#define ULMK_BOARD_DMA1_MAP_SIZE	0x800u
+#define ULMK_BOARD_DMA1_FULL_MAP_SIZE	0xC00u	/* DMA1 + DMAMUX */
+#define ULMK_BOARD_DMA_MAX_SLOTS	3u
+#define ULMK_BOARD_DMA_SLOT_ADC		0u
+#define ULMK_BOARD_DMA_SLOT_I2C_TX	1u
+#define ULMK_BOARD_DMA_SLOT_I2C_RX	2u
+#define ULMK_BOARD_DMAMUX_ADC1		9u
+#define ULMK_BOARD_DMAMUX_I2C3_RX	73u
+#define ULMK_BOARD_DMAMUX_I2C3_TX	74u
 #define ULMK_BOARD_NVIC_DMA1_STR0	11u
-#define ULMK_BOARD_IRQ_DMA_ADC		15u
+#define ULMK_BOARD_NVIC_DMA1_STR1	12u
+#define ULMK_BOARD_NVIC_DMA1_STR2	13u
+#define ULMK_BOARD_IRQ_DMA_STR0		15u
+#define ULMK_BOARD_IRQ_DMA_STR1		1u
+#define ULMK_BOARD_IRQ_DMA_STR2		2u
+#define ULMK_BOARD_IRQ_DMA_ADC		ULMK_BOARD_IRQ_DMA_STR0
+#define ULMK_BOARD_IRQ_DMA_I2C_TX	ULMK_BOARD_IRQ_DMA_STR1
+#define ULMK_BOARD_IRQ_DMA_I2C_RX	ULMK_BOARD_IRQ_DMA_STR2
 
 /* ADC1 channel and pad maps for the expansion connector. */
 #define ULMK_BOARD_ADC_CH0		15u	/* PA3 */
@@ -169,9 +193,52 @@
 	(ULMK_BOARD_DISPLAY_W * ULMK_BOARD_DISPLAY_H * ULMK_BOARD_DISPLAY_BPP)
 /* Cover both RGB565 framebuffers; size must fit PMSAv7 power-of-two round-up. */
 #define ULMK_BOARD_DISPLAY_FB_MAP_SIZE	ULMK_BOARD_SDRAM_SIZE
+/*
+ * LVGL tlsf pool in SDRAM after the dual LTDC FBs (identity-mapped).
+ * 8 MiB − 2×FB ≈ 5.6 MiB; use 5 MiB for widgets / opa_layer / scrolling.
+ */
+#define ULMK_BOARD_LVGL_HEAP_OFF	(2u * ULMK_BOARD_DISPLAY_FB_BYTES)
+#define ULMK_BOARD_LVGL_HEAP_SIZE	(5u * 1024u * 1024u)
+#define ULMK_BOARD_LVGL_HEAP_ADDR \
+	(ULMK_BOARD_SDRAM_BASE + ULMK_BOARD_LVGL_HEAP_OFF)
 #define ULMK_BOARD_NVIC_LTDC		88u
 #define ULMK_BOARD_IRQ_LTDC		16u
 #define ULMK_BOARD_DISP_ON_PORT		8u	/* GPIOI */
 #define ULMK_BOARD_DISP_ON_PIN		7u
+
+/* ── I2C3 (touch FT5446 @ 0x38, PH7 SCL / PH8 SDA AF4) ──────────────── */
+
+#define ULMK_BOARD_I2C_MAX		1u
+#define ULMK_BOARD_I2C3_BASE		0x40005C00u
+#define ULMK_BOARD_I2C_MAP_SIZE		0x400u
+#define ULMK_BOARD_I2C_BITRATE_HZ	400000u
+#define ULMK_BOARD_I2C_SCL_PORT		7u	/* GPIOH */
+#define ULMK_BOARD_I2C_SCL_PIN		7u
+#define ULMK_BOARD_I2C_SDA_PORT		7u
+#define ULMK_BOARD_I2C_SDA_PIN		8u
+#define ULMK_BOARD_I2C_AF		4u
+#define ULMK_BOARD_NVIC_I2C3_EV		72u
+#define ULMK_BOARD_IRQ_I2C3_EV		3u
+/* FT5446 INT PH9 active-low → EXTI9 */
+#define ULMK_BOARD_TOUCH_INT_PORT	7u
+#define ULMK_BOARD_TOUCH_INT_PIN	9u
+#define ULMK_BOARD_TOUCH_ADDR7		0x38u
+#define ULMK_BOARD_NVIC_EXTI9_5		23u
+#define ULMK_BOARD_IRQ_TOUCH_EXTI	4u
+#define ULMK_BOARD_EXTI_BASE		0x58000000u
+#define ULMK_BOARD_SYSCFG_BASE		0x58000400u
+#define ULMK_BOARD_EXTI_MAP_SIZE	0x400u
+
+/* ── QUADSPI NOR W25Q128 (PF6–10 / PG6 AF9) ─────────────────────────── */
+
+#define ULMK_BOARD_QSPI_MAX		1u
+#define ULMK_BOARD_QSPI_BASE		0x52005000u
+#define ULMK_BOARD_QSPI_MAP_SIZE	0x1000u
+#define ULMK_BOARD_QSPI_FLASH_BASE	0x90000000u
+#define ULMK_BOARD_QSPI_FLASH_SIZE	(16u * 1024u * 1024u)
+#define ULMK_BOARD_NVIC_QSPI		92u
+#define ULMK_BOARD_IRQ_QSPI		5u
+	/* AHB 240 MHz / 16 = 15 MHz — conservative for bring-up */
+#define ULMK_BOARD_QSPI_PRESCALER	15u
 
 #endif /* ULMK_BOARD_CONFIG_H */

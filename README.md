@@ -7,7 +7,7 @@ subdirectory is a self-contained chip input (`ULMK_CHIP_DIR`) with `memory.ld`,
 | Board | Kit / SoC | Status |
 |-------|-----------|--------|
 | [tc275_lite](tc275_lite/) | Infineon AURIX TC275 Lite Kit (`KIT_AURIX_TC275_LITE`) | Phase 0+1 (clock, STM0, ASCLIN0 console) |
-| [witte_linum](witte_linum/) | Witte Technology Linum (`STM32H753ZI`) | SDRAM, PWM, CAN, ADC, LTDC display + silicon UP HIL (RTT) |
+| [witte_linum](witte_linum/) | Witte Technology Linum (`STM32H753ZI`) | SDRAM, PWM, CAN, ADC, LTDC, I2C/touch, QSPI + silicon UP HIL (RTT) |
 
 Build from the ulmk repo:
 
