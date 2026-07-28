@@ -223,24 +223,41 @@ static int display_wait_vsync(void)
 	return ULMK_OK;
 }
 
-static int display_do_flip(void)
+static int display_do_present(uint32_t phys)
 {
 	int ret;
+	uint8_t idx;
 
 	if (!g_ltdc_ready)
 		return ULMK_EINVAL;
+	if (phys == fb_phys(0u))
+		idx = 0u;
+	else if (phys == fb_phys(1u))
+		idx = 1u;
+	else
+		return ULMK_EINVAL;
 
-	g_pend_addr = fb_phys(g_back);
+	/*
+	 * Program shadow CFBAR and reload on next vertical blank, then wait
+	 * on the line IRQ (notif) — never spin on SRCR.VBR.
+	 * Caller must D-cache-clean the FB (or dirty rect) before present.
+	 */
+	LTDC_Layer1->CFBAR = phys;
+	g_ltdc->SRCR = LTDC_SRCR_VBR;
+	__asm__ volatile("dsb" ::: "memory");
 	ret = display_wait_vsync();
 	if (ret != ULMK_OK)
 		return ret;
 
-	LTDC_Layer1->CFBAR = g_pend_addr;
-	g_ltdc->SRCR = LTDC_SRCR_IMR;
-	g_front = g_back;
-	g_back = (g_back == 0u) ? 1u : 0u;
-	__asm__ volatile("dsb" ::: "memory");
+	g_front = idx;
+	g_back = (idx == 0u) ? 1u : 0u;
+	g_pend_addr = phys;
 	return ULMK_OK;
+}
+
+static int display_do_flip(void)
+{
+	return display_do_present(fb_phys(g_back));
 }
 
 static void display_server(void *arg)
@@ -297,6 +314,10 @@ static void display_server(void *arg)
 			break;
 		case DISPLAY_MSG_FLIP:
 			reply.words[0] = (uint32_t)display_do_flip();
+			break;
+		case DISPLAY_MSG_PRESENT:
+			reply.words[0] =
+				(uint32_t)display_do_present(msg.words[1]);
 			break;
 		case DISPLAY_MSG_ON:
 			disp_on_gpio(msg.words[0] != 0u);

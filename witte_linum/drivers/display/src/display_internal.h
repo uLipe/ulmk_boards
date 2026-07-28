@@ -8,6 +8,7 @@
 #define DISPLAY_MSG_WRITE	1u
 #define DISPLAY_MSG_FLIP	2u
 #define DISPLAY_MSG_ON		3u
+#define DISPLAY_MSG_PRESENT	4u
 #define DISPLAY_NOTIF_VSYNC	0u
 
 extern ulmk_ep_t g_display_ep;

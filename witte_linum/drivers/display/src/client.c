@@ -17,7 +17,7 @@ static int display_call(ulmk_msg_t *msg)
 	return (int)(int32_t)msg->words[0];
 }
 
-static void *display_fb_map(void)
+void *display_fb_base(void)
 {
 	if (g_fb_map == NULL) {
 		g_fb_map = ulmk_mem_map((void *)(uintptr_t)ULMK_BOARD_SDRAM_BASE,
@@ -28,12 +28,45 @@ static void *display_fb_map(void)
 	return g_fb_map;
 }
 
+uint16_t *display_fb(unsigned idx)
+{
+	uint8_t *base;
+
+	if (idx > 1u)
+		return NULL;
+	base = (uint8_t *)display_fb_base();
+	if (!base)
+		return NULL;
+	return (uint16_t *)(base + (uintptr_t)idx * DISPLAY_FB_BYTES);
+}
+
+int display_present(const void *fb)
+{
+	ulmk_msg_t msg = {0};
+	uintptr_t virt;
+	uintptr_t base;
+	uintptr_t phys;
+
+	if (!fb)
+		return ULMK_EINVAL;
+	base = (uintptr_t)display_fb_base();
+	if (base == 0u)
+		return ULMK_ENOMEM;
+	virt = (uintptr_t)fb;
+	if (virt != base && virt != base + DISPLAY_FB_BYTES)
+		return ULMK_EINVAL;
+	phys = ULMK_BOARD_SDRAM_BASE + (virt - base);
+	msg.label = DISPLAY_MSG_PRESENT;
+	msg.words[1] = (uint32_t)phys;
+	return display_call(&msg);
+}
+
 uint16_t *display_write(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
 {
 	ulmk_msg_t msg = {0};
 	int ret;
 
-	if (display_fb_map() == NULL)
+	if (display_fb_base() == NULL)
 		return NULL;
 	if (x != 0u || y != 0u || w != DISPLAY_W || h != DISPLAY_H)
 		return NULL;

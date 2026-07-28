@@ -10,6 +10,7 @@
 #include "board_services.h"
 #include "board_timer.h"
 #include "board_config.h"
+#include "board_cache.h"
 
 #define RGB565(r, g, b) \
 	((uint16_t)((((r) & 0xF8u) << 8) | (((g) & 0xFCu) << 3) | (((b) & 0xF8u) >> 3)))
@@ -209,7 +210,7 @@ static void draw_frame(uint16_t *fb, uint32_t sec)
 	draw_string_centered(fb, y0, TITLE_LINE, COL_FG);
 	draw_string_centered(fb, y0 + LINE_GAP, BOARD_LINE, COL_ACCENT);
 	draw_string_centered(fb, y0 + 2 * LINE_GAP, up, COL_FG);
-	__asm__ volatile("dsb" ::: "memory");
+	board_dcache_clean(fb, DISPLAY_FB_BYTES);
 }
 
 void ulmk_root_thread(const ulmk_boot_info_t *info)

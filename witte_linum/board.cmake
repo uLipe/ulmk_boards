@@ -24,6 +24,7 @@ set(ULMK_BOARD_SOURCES
 	board_rtt.c
 	board_printk.c
 	board_services.c
+	board_cache.c
 	board_console.c
 	board_timer.c
 	board_leds.c
@@ -41,8 +42,16 @@ set(ULMK_BOARD_SOURCES
 	drivers/can/src/client.c
 	drivers/adc/src/server.c
 	drivers/adc/src/client.c
+	drivers/dma/src/server.c
+	drivers/dma/src/client.c
 	drivers/display/src/server.c
 	drivers/display/src/client.c
+	drivers/i2c/src/server.c
+	drivers/i2c/src/client.c
+	drivers/touch/src/server.c
+	drivers/touch/src/client.c
+	drivers/qspi/src/server.c
+	drivers/qspi/src/client.c
 	${ULMK_BOARD_STM32_SOURCES}
 )
 
@@ -60,7 +69,15 @@ set(ULMK_BOARD_INCLUDES
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/can/src"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/adc/include"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/adc/src"
+	"${CMAKE_CURRENT_LIST_DIR}/drivers/dma/include"
+	"${CMAKE_CURRENT_LIST_DIR}/drivers/dma/src"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/display/include"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/display/src"
+	"${CMAKE_CURRENT_LIST_DIR}/drivers/i2c/include"
+	"${CMAKE_CURRENT_LIST_DIR}/drivers/i2c/src"
+	"${CMAKE_CURRENT_LIST_DIR}/drivers/touch/include"
+	"${CMAKE_CURRENT_LIST_DIR}/drivers/touch/src"
+	"${CMAKE_CURRENT_LIST_DIR}/drivers/qspi/include"
+	"${CMAKE_CURRENT_LIST_DIR}/drivers/qspi/src"
 	"${CMAKE_CURRENT_LIST_DIR}"
 )

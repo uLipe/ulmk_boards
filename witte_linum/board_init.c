@@ -133,6 +133,8 @@ static void periph_clocks(void)
 	LL_AHB4_GRP1_EnableClock(LL_AHB4_GRP1_PERIPH_GPIOK);
 	LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_DMA1);
 	LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_ADC12);
+	/* Sync ADC to AHB (HCLK/2) — avoids needing a separate ker_ck source. */
+	LL_RCC_SetADCClockSource(LL_RCC_ADC_CLKSOURCE_CLKP);
 	LL_AHB3_GRP1_EnableClock(LL_AHB3_GRP1_PERIPH_FMC);
 	LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_USART1);
 	LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_TIM4);
@@ -142,6 +144,9 @@ static void periph_clocks(void)
 	/* TIM2 for silicon_irq_stress / silicon_wcet HIL (userspace MMIO). */
 	LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_TIM2);
 	LL_APB3_GRP1_EnableClock(LL_APB3_GRP1_PERIPH_LTDC);
+	LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_I2C3);
+	LL_RCC_SetI2CClockSource(LL_RCC_I2C123_CLKSOURCE_PCLK1);
+	LL_AHB3_GRP1_EnableClock(LL_AHB3_GRP1_PERIPH_QSPI);
 	spin_wait(16u);
 
 	/*

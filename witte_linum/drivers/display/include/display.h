@@ -17,4 +17,9 @@ uint16_t *display_write(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
 int display_flip(void);
 int display_on(int on);
 
+/* Dual-FB helpers for LVGL DIRECT (no IPC for map; present waits vsync). */
+void *display_fb_base(void);
+uint16_t *display_fb(unsigned idx);
+int display_present(const void *fb);
+
 #endif /* DISPLAY_DRV_H */
