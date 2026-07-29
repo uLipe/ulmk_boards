@@ -78,7 +78,8 @@ flowchart TB
 | `drivers/<name>/` | Public API + client + server; iLLD HAL; pin args in `*_init` |
 | `deps/illd_tc2x/` | Infineon [iLLD TC2x V1.22.0](https://github.com/Infineon/illd_release_tc2x) (IFASLL) |
 
-**Single core:** SMP is not supported; bring-up targets **CPU0** only.
+**Cores:** default builds are UP on **CPU0**.  SMP across CPU0/CPU1/CPU2 is
+supported with `--enable-smp` — see the SMP HIL section below.
 
 **TriCore ISA:** TC275 CPU0 is **TC1.6E (1.6.1)** with **112 KB** DSPR
 (`0x70000000`–`0x7001BFFF`).  Do not use the 120 KB / 240 KB figures from
