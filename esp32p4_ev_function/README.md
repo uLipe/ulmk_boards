@@ -86,7 +86,7 @@ $CAP $ELF 'hello from userspace' 15
 $CAP $ELF 'blinky LED off' 15
 $CAP $ELF 'pwm duty=' 15
 $CAP $ELF 'ch0=' 15
-$CAP $ELF 'display hello running.*dpi=1' 20
+$CAP $ELF 'display banner on' 20
 $CAP $ELF 'dsi fb stream' 15
 $CAP $ELF 'SPI: PASS' 15
 $CAP $ELF 'tx id=.*rx id=' 15
