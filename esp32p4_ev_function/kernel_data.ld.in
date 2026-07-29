@@ -1,0 +1,19 @@
+/* ESP32-P4: .data LMA fixed to next 64 KiB flash page. */
+    __ulmk_kernel_data_load = LOADADDR(.kernel_data);
+    .kernel_data : AT(0x40010000) {
+        . = ALIGN(ULMK_MPU_ALIGN);
+        _ulmk_kernel_data_start = .;
+        *libulmk_kernel.a:(.data.* .data)
+        *libulmk_kernel.a:(.sdata .sdata.*)
+        . = ALIGN(4);
+        _ulmk_kernel_data_end = .;
+    } > KERNEL_RAM
+
+    .kernel_bss (NOLOAD) : ALIGN(4) {
+        _ulmk_kernel_bss_start = .;
+        *libulmk_kernel.a:(.bss.* .bss)
+        *libulmk_kernel.a:(.sbss .sbss.*)
+        *libulmk_kernel.a:(COMMON)
+        . = ALIGN(4);
+        _ulmk_kernel_bss_end = .;
+    } > KERNEL_RAM

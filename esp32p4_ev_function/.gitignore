@@ -1,0 +1,2 @@
+# Written by board.cmake at configure time; holds absolute ESP_IDF_PATH.
+rom.ld

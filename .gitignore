@@ -2,6 +2,7 @@
 *.elf
 *.hex
 *.bin
+!**/scripts/prebuilt/*.bin
 *.map
 *.o
 *.a

@@ -1,0 +1,5 @@
+/* First bytes of KERNEL_FLASH / segment 0 — required by IDF bootloader. */
+    .esp_app_desc : {
+        KEEP(*(.rodata_desc))
+        . = ALIGN(16);
+    } > KERNEL_FLASH
