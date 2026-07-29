@@ -52,6 +52,9 @@ add_library(ulmk_lvgl_demos STATIC ${_LVGL_DEMO_SRC})
 foreach(_tgt ulmk_lvgl ulmk_lvgl_demos)
 	target_include_directories(${_tgt} PUBLIC
 		"${_LVGL_DIR}"
+		# The benchmark overlay lives outside demos/benchmark, so the
+		# quoted includes it inherits from upstream need the dir here.
+		"${_LVGL_DIR}/demos/benchmark"
 		"${CMAKE_CURRENT_LIST_DIR}"
 		"${CMAKE_CURRENT_LIST_DIR}/../.."
 	)
