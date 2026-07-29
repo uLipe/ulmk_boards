@@ -21,9 +21,7 @@
 #define ULMK_ARCH_MPU_REGIONS		16
 #endif
 
-#ifndef ULMK_ARCH_HAVE_FPU
-#define ULMK_ARCH_HAVE_FPU		1
-#endif
+/* FPU presence follows ULMK_CONFIG_FPU; see cmake/arm_fpu.cmake. */
 
 /*
  * Enable Cortex-M7 I+D cache after MPU bring-up (arch_init).  SHARED SDRAM

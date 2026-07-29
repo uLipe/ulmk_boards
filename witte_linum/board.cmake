@@ -5,12 +5,11 @@
 set(UL_BOARD_ARCH "arm")
 set(ULMK_BOARD_CPU "cortex-m7")
 
-set(_ULMK_ARM_MFLAGS "-mcpu=cortex-m7 -mfloat-abi=softfp -mfpu=fpv5-sp-d16")
-if(DEFINED CMAKE_C_FLAGS)
-	string(APPEND CMAKE_C_FLAGS " ${_ULMK_ARM_MFLAGS}")
-	string(APPEND CMAKE_ASM_FLAGS " ${_ULMK_ARM_MFLAGS}")
-	string(APPEND CMAKE_EXE_LINKER_FLAGS " ${_ULMK_ARM_MFLAGS}")
-endif()
+# The H753 FPU is double precision (fpv5-d16), which is also what CubeIDE
+# emits — matching it keeps SDK consumers from having to retune the project.
+# ABI follows ULMK_CONFIG_FPU.
+include("${_ULMK_REPO_ROOT}/cmake/arm_fpu.cmake")
+ulmk_arm_float_flags(cortex-m7 fpv5-d16)
 
 include("${CMAKE_CURRENT_LIST_DIR}/deps/stm32ll.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/deps/rtt.cmake")
