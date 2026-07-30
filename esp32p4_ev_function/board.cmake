@@ -77,6 +77,8 @@ set(ULMK_BOARD_INCLUDES
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/adc/src"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/dma/include"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/dma/src"
+	"${CMAKE_CURRENT_LIST_DIR}/drivers/gdma_axi/include"
+	"${CMAKE_CURRENT_LIST_DIR}/drivers/gdma_axi/src"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/display/include"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/display/src"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/dsi/include"
@@ -131,6 +133,8 @@ set(ULMK_BOARD_SOURCES
 	drivers/adc/src/adc_hw.c
 	drivers/dma/src/server.c
 	drivers/dma/src/client.c
+	drivers/gdma_axi/src/server.c
+	drivers/gdma_axi/src/client.c
 	drivers/display/src/server.c
 	drivers/display/src/client.c
 	drivers/touch/src/server.c

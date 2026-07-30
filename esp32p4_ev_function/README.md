@@ -88,7 +88,7 @@ $CAP $ELF 'pwm duty=' 15
 $CAP $ELF 'ch0=' 15
 $CAP $ELF 'display banner on' 20
 $CAP $ELF 'dsi fb stream' 15
-$CAP $ELF 'SPI: PASS' 15
+$CAP $ELF 'SPI: PASS both instances' 15
 $CAP $ELF 'tx id=.*rx id=' 15
 $CAP $ELF 'touch waiting|gt911|display touch' 15
 $CAP $ELF 'psram axi ok' 15
@@ -110,8 +110,9 @@ Components: `hello_world`, `board_blinky`, `board_pwm_backlight`, `board_adc_sca
 | `adc` | ADC-Digi continuous over AHB-PDMA; REGI2C biases the SAR front-end |
 | `uart` | UART1 server (USJ console unchanged) |
 | `i2c` / `touch` | I2C0 HW + GT911 X/Y |
-| `spi` | **GPSPI2** full-duplex (not MSPI / not QSPI) |
+| `spi` | Multi-instance **GPSPI2/3** full-duplex over independent GDMA-AXI pairs |
 | `dma` | AHB-PDMA, per-channel: memcpy plus peripheral RX (arm/wait) |
+| `gdma_axi` | AXI-PDMA: memcpy plus independent GPSPI2/3 RX/TX pairs |
 | `can` | TWAI0 self-test loopback (`tx id=` + `rx id=`) |
 | `display` / `dsi` | EK79007: VPG bring-up → `dsi_fb_start` DW_GDMA→DPI FB |
 | `board_lvgl_benchmark` | **Stub only** (soft FB flips) — not LVGL |
