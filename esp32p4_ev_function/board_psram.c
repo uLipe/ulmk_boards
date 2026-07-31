@@ -12,6 +12,7 @@
 #include "board_cache.h"
 
 #include "board_console.h"
+#include "board_psram_tune.h"
 
 typedef enum {
 	ESP_ROM_SPIFLASH_QIO_MODE = 0,
@@ -116,7 +117,8 @@ int Cache_PSRAM_MMU_Set(uint32_t sensitive, uint32_t vaddr, uint32_t paddr,
 #define WR_DUMMY		(2u * (7u - 1u))
 #define RD_LATENCY		4u
 #define WR_LATENCY		1u
-#define MAP_PAGES		64u /* 4 MiB — dual 1024×600 RGB565 FBs */
+/* 8 MiB — dual 1024×600 RGB565 FBs + LVGL tlsf heap after them. */
+#define MAP_PAGES		128u
 #define PAGE_SHIFT		16u
 
 static int g_psram_ok;
@@ -140,9 +142,9 @@ static void settle_brief(void)
 		;
 }
 
-static void hex_xact(uint32_t cmd, uint32_t addr, uint32_t dummy,
-		     uint32_t *tx, uint32_t tx_bits,
-		     uint32_t *rx, uint32_t rx_bits)
+void board_psram_hex_xact(uint32_t cmd, uint32_t addr, uint32_t dummy,
+			  uint32_t *tx, uint32_t tx_bits,
+			  uint32_t *rx, uint32_t rx_bits)
 {
 	esp_rom_spi_cmd_t conf;
 	uint32_t a = addr;
@@ -160,6 +162,13 @@ static void hex_xact(uint32_t cmd, uint32_t addr, uint32_t dummy,
 	esp_rom_spi_cmd_config(MSPI_ID_3, &conf);
 	esp_rom_spi_cmd_start(MSPI_ID_3, (uint8_t *)rx,
 			      (uint16_t)(rx_bits / 8u), (1u << 1), false);
+}
+
+static void hex_xact(uint32_t cmd, uint32_t addr, uint32_t dummy,
+		     uint32_t *tx, uint32_t tx_bits,
+		     uint32_t *rx, uint32_t rx_bits)
+{
+	board_psram_hex_xact(cmd, addr, dummy, tx, tx_bits, rx, rx_bits);
 }
 
 static int probe_chip(void)
@@ -212,11 +221,30 @@ static void clocks_and_pins(void)
 	wr(HP_RST_EN0, v & ~(RST_DUAL_MSPI_AXI | RST_DUAL_MSPI_APB));
 	settle_brief();
 
-	/* IDF mspi_timing_ll_enable_dqs + pin_drv_set(2) on DQS pads. */
-	wr(PSRAM_DQS0_REG, (rd(PSRAM_DQS0_REG) & ~(3u << 15)) | DQS_XPD |
-	   (2u << 15));
-	wr(PSRAM_DQS1_REG, (rd(PSRAM_DQS1_REG) & ~(3u << 15)) | DQS_XPD |
-	   (2u << 15));
+	/*
+	 * IDF mspi_timing_ll_pin_drv_set(2) + enable_dqs: every PSRAM pad at
+	 * drive strength 2.  Leaving data/CK/CS at reset drive is enough for
+	 * the idle probe, but bit-errors show up under GDMA+writeback @200M.
+	 */
+	{
+		uint32_t i;
+		uint32_t v;
+
+		for (i = 0u; i < 8u; i++) {
+			v = rd(IOMUX_MSPI + 0x1cu + i * 4u);
+			v = (v & ~(3u << 12)) | (2u << 12);
+			wr(IOMUX_MSPI + 0x1cu + i * 4u, v);
+		}
+		for (i = 0u; i < 10u; i++) {
+			v = rd(IOMUX_MSPI + 0x40u + i * 4u);
+			v = (v & ~(3u << 12)) | (2u << 12);
+			wr(IOMUX_MSPI + 0x40u + i * 4u, v);
+		}
+		wr(PSRAM_DQS0_REG, (rd(PSRAM_DQS0_REG) & ~(3u << 15)) | DQS_XPD |
+		   (2u << 15));
+		wr(PSRAM_DQS1_REG, (rd(PSRAM_DQS1_REG) & ~(3u << 15)) | DQS_XPD |
+		   (2u << 15));
+	}
 
 	freqbits = ((freqdiv - 1u) << 0) | ((freqdiv / 2u - 1u) << 8) |
 		   ((freqdiv - 1u) << 16);
@@ -304,10 +332,29 @@ int board_psram_enable_axi(void)
 	wr(HP_CORE_ERR_RESP_DIS, 0x7u);
 	board_console_printf("ulmk: psram axi err_resp off\n");
 
-	/* IDF order: MSPI AXI phases first, then MMU map. */
+	/*
+	 * IDF order: configure MSPI2 for PSRAM, timing-tune, then MMU map.
+	 * Tuning itself talks MSPI3 user cmds + IOMUX delaylines; the MSPI2
+	 * side must already be in the same line/DDR mode the AXI path uses.
+	 */
 	config_axi();
 	board_console_printf("ulmk: psram axi cfg\n");
+	/* IDF clears variable-dummy for the MSPI3 sweep; mirror on MSPI2. */
+	wr(SMEM_DDR, rd(SMEM_DDR) & ~SMEM_VAR_DUMMY);
+	if (board_psram_timing_tune() != 0)
+		return -1;
+	wr(SMEM_DDR, rd(SMEM_DDR) | SMEM_VAR_DUMMY);
+	board_psram_timing_apply();
 	if (map_window() != 0)
+		return -1;
+	/*
+	 * SPI-user-cmd tuning can land on a point that is still marginal on
+	 * the AXI+cache path the LVGL flush uses.  Refine against that path
+	 * before handing the window to userspace.
+	 */
+	if (board_psram_timing_refine_axi(
+		    (void *)(uintptr_t)(ULMK_BOARD_PSRAM_BASE + 0x1000u),
+		    4096u) != 0)
 		return -1;
 
 	/*

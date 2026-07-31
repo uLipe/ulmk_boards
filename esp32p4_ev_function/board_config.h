@@ -83,7 +83,7 @@
 /* SYSTIMER counts XTAL 40 MHz through a fixed /2.5 divider → 16 MHz. */
 #define ULMK_BOARD_TICK_CLOCK_HZ	16000000u
 #define ULMK_BOARD_SYSTIMER_BASE	0x500E2000u
-#define ULMK_BOARD_FCPU_HZ		360000000u
+#define ULMK_BOARD_FCPU_HZ		400000000u
 
 /* Interrupt matrix (HP) — soc/interrupts.h (alias ETS_LP_TSENS does not bump). */
 #define ULMK_BOARD_INTMTX_BASE		0x500D6000u
@@ -197,11 +197,26 @@
 #define ULMK_BOARD_LED_COUNT		1u
 #define ULMK_BOARD_DISPLAY_W		1024u
 #define ULMK_BOARD_DISPLAY_H		600u
-#define ULMK_BOARD_DISPLAY_BPP		16u
+/* Bytes per pixel (RGB565): display ports use it as the stride factor. */
+#define ULMK_BOARD_DISPLAY_BPP		2u
 #define ULMK_BOARD_DISPLAY_FB_BYTES \
-	(ULMK_BOARD_DISPLAY_W * ULMK_BOARD_DISPLAY_H * 2u)
+	(ULMK_BOARD_DISPLAY_W * ULMK_BOARD_DISPLAY_H * ULMK_BOARD_DISPLAY_BPP)
 #define ULMK_BOARD_DISPLAY_FB_MAP_SIZE \
 	(ULMK_BOARD_DISPLAY_FB_BYTES * 2u)
 
+/*
+ * LVGL tlsf pool in PSRAM after the dual FBs.
+ *   FB = 1024*600*2 = 0x12C000; heap @ 0x48000000 + 2*FB + guard = 0x48268000
+ *
+ * The guard is not padding for alignment: with the pool butted up against
+ * the second FB, anything that writes one row past the framebuffer lands on
+ * the allocator's own block headers, and the failure surfaces later as a
+ * corrupt pointer in unrelated LVGL code.
+ */
+#define ULMK_BOARD_LVGL_HEAP_GUARD	0x10000u
+#define ULMK_BOARD_LVGL_HEAP_ADDR \
+	(ULMK_BOARD_PSRAM_BASE + ULMK_BOARD_DISPLAY_FB_MAP_SIZE + \
+	 ULMK_BOARD_LVGL_HEAP_GUARD)
+#define ULMK_BOARD_LVGL_HEAP_SIZE	(5u * 1024u * 1024u)
 
 #endif /* ULMK_BOARD_CONFIG_H */

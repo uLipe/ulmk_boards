@@ -26,9 +26,12 @@
 #define I2C0_APB_EN		(1u << 12)
 #define I2C0_RST_EN		(1u << 22)
 #define I2C0_CLK_EN		(1u << 1)
+/* src_sel[0], div_num[9:2], div_numerator[17:10], div_denominator[25:18] */
+#define I2C0_CLK_CFG_MASK	0x03FFFFFDu
 
 #define I2C_SCL_LOW		(I2C_BASE + 0x00u)
 #define I2C_CTR			(I2C_BASE + 0x04u)
+#define I2C_SR			(I2C_BASE + 0x08u)
 #define I2C_TO			(I2C_BASE + 0x0cu)
 #define I2C_FIFO_CONF		(I2C_BASE + 0x18u)
 #define I2C_DATA		(I2C_BASE + 0x1cu)
@@ -43,15 +46,18 @@
 #define I2C_SCL_STOP_HOLD	(I2C_BASE + 0x48u)
 #define I2C_SCL_STOP_SETUP	(I2C_BASE + 0x4cu)
 #define I2C_FILTER_CFG		(I2C_BASE + 0x50u)
-#define I2C_COMD0		(I2C_BASE + 0x58u)
-#define I2C_COMD1		(I2C_BASE + 0x5cu)
+#define I2C_COMD(n)		(I2C_BASE + 0x58u + (n) * 4u)
 
 #define I2C_CTR_MS_MODE		(1u << 4)
 #define I2C_CTR_TRANS_START	(1u << 5)
-#define I2C_CTR_CLK_EN		(1u << 8)
-#define I2C_CTR_ARBIT_EN	(1u << 9)
 #define I2C_CTR_FSM_RST		(1u << 10)
 #define I2C_CTR_CONF_UPGATE	(1u << 11)
+
+#define I2C_FIFO_RX_RST		(1u << 12)
+#define I2C_FIFO_TX_RST		(1u << 13)
+
+#define I2C_SR_BUS_BUSY		(1u << 4)
+#define I2C_SR_SCL_STATE	(7u << 28)
 
 #define I2C_INT_END_DETECT	(1u << 3)
 #define I2C_INT_ARBIT_LOST	(1u << 5)
@@ -62,8 +68,13 @@
 				 I2C_INT_TRANS_COMPLETE | I2C_INT_TIMEOUT | \
 				 I2C_INT_NACK)
 
+/* Opcodes are chip-specific: RSTART is 6 here, not the legacy 0. */
 #define I2C_CMD_WRITE		1u
 #define I2C_CMD_STOP		2u
+#define I2C_CMD_READ		3u
+#define I2C_CMD_RSTART		6u
+
+#define I2C_CMD_ACK_VALUE	(1u << 10)
 
 ulmk_ep_t g_i2c_ep;
 static ulmk_notif_t g_i2c_notif;
@@ -135,9 +146,13 @@ static void i2c_hw_init(void)
 	wr(HP_RST_EN1, v | I2C0_RST_EN);
 	wr(HP_RST_EN1, v & ~I2C0_RST_EN);
 
-	/* XTAL src (bit0=0), clk_en, div_num=0 → /1 */
+	/*
+	 * XTAL src (bit0=0), div_num=0 → /1.  The fractional divider
+	 * (numerator/denominator) must be cleared too: whatever the
+	 * bootloader left there keeps skewing the module clock.
+	 */
 	v = rd(HP_PERI_CLK_CTRL10);
-	v &= ~((1u << 0) | (0xFFu << 2));
+	v &= ~I2C0_CLK_CFG_MASK;
 	v |= I2C0_CLK_EN;
 	wr(HP_PERI_CLK_CTRL10, v);
 
@@ -153,17 +168,17 @@ static void i2c_hw_init(void)
 	wr(I2C_SCL_RSTART_SETUP, half - 1u);
 	wr(I2C_SCL_STOP_HOLD, half - 1u);
 	wr(I2C_SCL_STOP_SETUP, half - 1u);
-	wr(I2C_TO, (16u << 0) | (1u << 5));
+	/* SCL stuck timeout: 2^20 module cycles ≈ 26 ms @40 MHz. */
+	wr(I2C_TO, (20u << 0) | (1u << 5));
 	wr(I2C_FILTER_CFG, (7u << 0) | (7u << 4) | (1u << 8) | (1u << 9));
 
-	/* open-drain force_out=0, master, arbitration */
-	wr(I2C_CTR, I2C_CTR_MS_MODE | I2C_CTR_CLK_EN | I2C_CTR_ARBIT_EN |
-		    I2C_CTR_CONF_UPGATE);
+	/* master, MSB first, open-drain pads (force_out=0), no arbitration */
+	wr(I2C_CTR, I2C_CTR_MS_MODE | I2C_CTR_CONF_UPGATE);
 
 	/* FIFO reset pulse */
 	v = rd(I2C_FIFO_CONF);
-	wr(I2C_FIFO_CONF, v | (1u << 12) | (1u << 13));
-	wr(I2C_FIFO_CONF, v & ~((1u << 12) | (1u << 13)));
+	wr(I2C_FIFO_CONF, v | I2C_FIFO_RX_RST | I2C_FIFO_TX_RST);
+	wr(I2C_FIFO_CONF, v & ~(I2C_FIFO_RX_RST | I2C_FIFO_TX_RST));
 
 	wr(I2C_INT_CLR, 0x3FFFu);
 	wr(I2C_INT_ENA, I2C_MASTER_EV_MASK);
@@ -209,21 +224,49 @@ static int finish_xfer(void)
 	return ULMK_EINVAL;
 }
 
+/*
+ * Every transfer starts with an RSTART command: the controller only drives
+ * the START condition when the command list says so, and without it no slave
+ * ever sees its address.
+ */
+static void xfer_begin(void)
+{
+	uint32_t v;
+
+	/*
+	 * A transfer raises several enabled sources (NACK + TRANS_COMPLETE
+	 * on every probe miss), so the notification is still signalled once
+	 * the previous wait returned.  Drain it here, otherwise the next
+	 * wait returns immediately and finish_xfer() clears I2C_INT while
+	 * the controller is mid-byte, leaving SCL held low forever.
+	 */
+	(void)ulmk_notif_poll(g_i2c_notif, 1u << I2C_NOTIF_EV);
+
+	wr(I2C_INT_CLR, 0x3FFFu);
+	if ((rd(I2C_SR) & I2C_SR_BUS_BUSY) != 0u)
+		wr(I2C_CTR, rd(I2C_CTR) | I2C_CTR_FSM_RST);
+	v = rd(I2C_FIFO_CONF);
+	wr(I2C_FIFO_CONF, v | I2C_FIFO_RX_RST | I2C_FIFO_TX_RST);
+	wr(I2C_FIFO_CONF, v & ~(I2C_FIFO_RX_RST | I2C_FIFO_TX_RST));
+}
+
+static void xfer_start(void)
+{
+	wr(I2C_CTR, rd(I2C_CTR) | I2C_CTR_CONF_UPGATE);
+	wr(I2C_CTR, rd(I2C_CTR) | I2C_CTR_TRANS_START);
+}
+
 static int i2c_do_probe(uint8_t addr7)
 {
-	uint8_t addr_byte;
-
 	if (!g_hw_ok)
 		return ULMK_ENOTSUP;
 
-	wr(I2C_INT_CLR, 0x3FFFu);
-	wr(I2C_CTR, rd(I2C_CTR) | I2C_CTR_FSM_RST);
-
-	addr_byte = (uint8_t)(addr7 << 1);
-	wr(I2C_DATA, addr_byte);
-	wr(I2C_COMD0, make_cmd(I2C_CMD_WRITE, 1u, 1));
-	wr(I2C_COMD1, make_cmd(I2C_CMD_STOP, 0u, 0));
-	wr(I2C_CTR, rd(I2C_CTR) | I2C_CTR_CONF_UPGATE | I2C_CTR_TRANS_START);
+	xfer_begin();
+	wr(I2C_DATA, (uint32_t)(addr7 << 1));
+	wr(I2C_COMD(0), make_cmd(I2C_CMD_RSTART, 0u, 0));
+	wr(I2C_COMD(1), make_cmd(I2C_CMD_WRITE, 1u, 1));
+	wr(I2C_COMD(2), make_cmd(I2C_CMD_STOP, 0u, 0));
+	xfer_start();
 
 	return finish_xfer();
 }
@@ -231,24 +274,21 @@ static int i2c_do_probe(uint8_t addr7)
 static int i2c_do_write(uint8_t addr7, const uint8_t *data, size_t len)
 {
 	uint32_t i;
-	uint8_t addr_byte;
 
 	if (!g_hw_ok)
 		return ULMK_ENOTSUP;
 	if (len + 1u > I2C_XFER_MAX)
 		return ULMK_EINVAL;
 
-	wr(I2C_INT_CLR, 0x3FFFu);
-	wr(I2C_CTR, rd(I2C_CTR) | I2C_CTR_FSM_RST);
-
-	addr_byte = (uint8_t)(addr7 << 1);
-	wr(I2C_DATA, addr_byte);
+	xfer_begin();
+	wr(I2C_DATA, (uint32_t)(addr7 << 1));
 	for (i = 0u; i < len; i++)
 		wr(I2C_DATA, data ? data[i] : 0u);
 
-	wr(I2C_COMD0, make_cmd(I2C_CMD_WRITE, (uint8_t)(len + 1u), 1));
-	wr(I2C_COMD1, make_cmd(I2C_CMD_STOP, 0u, 0));
-	wr(I2C_CTR, rd(I2C_CTR) | I2C_CTR_CONF_UPGATE | I2C_CTR_TRANS_START);
+	wr(I2C_COMD(0), make_cmd(I2C_CMD_RSTART, 0u, 0));
+	wr(I2C_COMD(1), make_cmd(I2C_CMD_WRITE, (uint8_t)(len + 1u), 1));
+	wr(I2C_COMD(2), make_cmd(I2C_CMD_STOP, 0u, 0));
+	xfer_start();
 
 	return finish_xfer();
 }
@@ -256,21 +296,24 @@ static int i2c_do_write(uint8_t addr7, const uint8_t *data, size_t len)
 static int i2c_do_read(uint8_t addr7, uint8_t *data, size_t len)
 {
 	uint32_t i;
-	uint8_t addr_byte;
+	uint32_t n;
 
 	if (!g_hw_ok || !data || len == 0u || len > I2C_XFER_MAX)
 		return !g_hw_ok ? ULMK_ENOTSUP : ULMK_EINVAL;
 
-	wr(I2C_INT_CLR, 0x3FFFu);
-	wr(I2C_CTR, rd(I2C_CTR) | I2C_CTR_FSM_RST);
+	xfer_begin();
+	wr(I2C_DATA, (uint32_t)((addr7 << 1) | 1u));
+	wr(I2C_COMD(0), make_cmd(I2C_CMD_RSTART, 0u, 0));
+	wr(I2C_COMD(1), make_cmd(I2C_CMD_WRITE, 1u, 1));
 
-	addr_byte = (uint8_t)((addr7 << 1) | 1u);
-	wr(I2C_DATA, addr_byte);
-	wr(I2C_COMD0, make_cmd(I2C_CMD_WRITE, 1u, 1));
-	/* READ: ack_val=1 → NACK (ok for single-byte; multi uses same) */
-	wr(I2C_COMD1, make_cmd(3u, (uint8_t)len, 0) | (1u << 10));
-	wr(I2C_BASE + 0x60u, make_cmd(I2C_CMD_STOP, 0u, 0));
-	wr(I2C_CTR, rd(I2C_CTR) | I2C_CTR_CONF_UPGATE | I2C_CTR_TRANS_START);
+	/* All but the last byte are ACKed; the last one must be NACKed. */
+	n = 2u;
+	if (len > 1u)
+		wr(I2C_COMD(n++), make_cmd(I2C_CMD_READ,
+					   (uint8_t)(len - 1u), 0));
+	wr(I2C_COMD(n++), make_cmd(I2C_CMD_READ, 1u, 0) | I2C_CMD_ACK_VALUE);
+	wr(I2C_COMD(n), make_cmd(I2C_CMD_STOP, 0u, 0));
+	xfer_start();
 
 	if (finish_xfer() != ULMK_OK)
 		return ULMK_EINVAL;

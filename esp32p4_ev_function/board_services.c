@@ -8,6 +8,7 @@
 #include "board_timer.h"
 #include "board_internal.h"
 #include "board_psram.h"
+#include "board_cpu_clk.h"
 #include <uart.h>
 #include <pinmux.h>
 #include <gpio.h>
@@ -95,6 +96,12 @@ void board_services_init(const ulmk_boot_info_t *info)
 	ulmk_tid_t         tid;
 
 	(void)info;
+
+	/*
+	 * Bootloader leaves ~90 MHz.  Raise CPLL→400 MHz before anything
+	 * CPU-bound (PSRAM probe, LVGL SW render) runs.
+	 */
+	(void)board_cpu_clk_set_400m();
 
 	g_ep = ulmk_ep_create();
 

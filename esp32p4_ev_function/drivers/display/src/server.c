@@ -46,27 +46,42 @@ static uint16_t *back_buffer(void)
 	return g_ready ? g_fb[g_front ^ 1u] : NULL;
 }
 
+static int do_present(void *fb)
+{
+	unsigned idx;
+
+	if (!g_ready || !fb)
+		return ULMK_EINVAL;
+	if (fb == (void *)g_fb[0])
+		idx = 0u;
+	else if (fb == (void *)g_fb[1])
+		idx = 1u;
+	else
+		return ULMK_EINVAL;
+
+	g_front = idx;
+	g_frame++;
+	if (!g_psram_fb)
+		return ULMK_OK;
+
+	if (!g_dpi_on) {
+		if (dsi_fb_start(fb, (uint32_t)ULMK_BOARD_DISPLAY_FB_BYTES) != 0) {
+			board_console_printf("ulmk: dsi fb start fail\n");
+			return ULMK_EINVAL;
+		}
+		g_dpi_on = 1;
+		return ULMK_OK;
+	}
+	if (dsi_fb_present(fb) != 0)
+		return ULMK_EINVAL;
+	return ULMK_OK;
+}
+
 static int do_flip(void)
 {
-	uint16_t *front;
-
 	if (!g_ready)
 		return ULMK_EINVAL;
-	g_front ^= 1u;
-	g_frame++;
-	front = g_fb[g_front];
-	if (g_psram_fb) {
-		if (!g_dpi_on) {
-			if (dsi_fb_start(front,
-					 (uint32_t)ULMK_BOARD_DISPLAY_FB_BYTES) != 0)
-				board_console_printf("ulmk: dsi fb start fail\n");
-			else
-				g_dpi_on = 1;
-		} else if (dsi_fb_ready()) {
-			(void)dsi_fb_set(front);
-		}
-	}
-	return ULMK_OK;
+	return do_present(g_fb[g_front ^ 1u]);
 }
 
 static void display_server(void *arg)
@@ -92,6 +107,10 @@ static void display_server(void *arg)
 			break;
 		case DISPLAY_MSG_FLIP:
 			reply.words[0] = (uint32_t)do_flip();
+			break;
+		case DISPLAY_MSG_PRESENT:
+			reply.words[0] = (uint32_t)do_present(
+				(void *)(uintptr_t)msg.words[0]);
 			break;
 		case DISPLAY_MSG_ON:
 			if (g_ready) {

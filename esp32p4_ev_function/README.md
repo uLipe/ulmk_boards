@@ -1,37 +1,26 @@
 # ESP32-P4 Function EV Board
 
-> **Work in progress.** This port boots, runs every component listed below and
-> passes its HIL captures, but it is not on the same footing as the other
-> boards yet. Known gaps:
->
-> - **No real memory isolation.** `PRESERVE_BOOT=1` keeps the bootloader's
->   entries, one of which is an unlocked RWX window over the whole internal
->   SRAM. The overlay only adds grants, so a U-mode thread still reaches
->   kernel memory. Closing this needs TOR support in the arch layer.
-> - A few drivers still busy-wait where they should bind a notification
->   (`spi`); PSRAM bring-up still calls into ROM.
-> - UP only, and the toolchain lives on the host rather than in the dev
->   container.
->
-> Treat it as a bring-up target, not a reference BSP.
-
 BSP `esp32p4_ev_function` — UP only. Boot: ROM → IDF bootloader @ `0x2000` →
 partition @ `0x8000` → ulmk app @ `0x10000`. Toolchain: `riscv32-esp-elf`
 from ESP-IDF (`ESP_IDF_PATH` / `IDF_PATH`). Drivers use HAL/LL/SOC headers +
-ROM PROVIDE — **no** `libidf` / FreeRTOS link.
+ROM PROVIDE — **no** `libidf` / FreeRTOS link. Host build
+(`UL_BOARD_HOST_BUILD=1`); not in the QEMU container.
 
 | Item | Value |
 |------|--------|
-| SoC | ESP32-P4 (RV32IMAF C, CLIC + INTMTX) |
-| Flash XIP | `0x40000020` (app image) |
-| SRAM | HP after L2 (`KERNEL_RAM`) |
-| PSRAM | `0x48000000` AXI — probe + `psram axi ok` at boot; FB may use PSRAM |
+| SoC | ESP32-P4 rev1 (RV32IMAFC, CLIC + INTMTX) |
+| Flash XIP | `0x40000020` (app image; userspace + LVGL) |
+| KERNEL_IRAM | `0x4FF20000` — 51 KiB below ROM hole; startup/trap/kernel text |
+| KERNEL_RAM | `0x4FF40000` — data/BSS/stacks/pool (skips ROM SPI pointers) |
+| PSRAM | `0x48000000` AXI — 8 MiB; DQS timing tune @ 200 MHz DTR |
+| CPU | 400 MHz (`board_cpu_clk_set_400m`) |
 | Console | UART bridge (often `/dev/ttyUSB1`) @ 115200 — not the JTAG ACM |
 | Debug | Built-in USB Serial/JTAG (`lsusb` → `303a:1001`); OpenOCD `scripts/openocd-p4.sh` |
 | Backlight / status | GPIO26 — LEDC ch0 (custom; stock EV uses GPIO23) |
 | LCD reset | GPIO27 (custom jumper) |
-| Display | VPG bring-up then **DW_GDMA→DPI** streams PSRAM RGB565 FB (1024×600) |
-| PMP | `ULMK_ARCH_PMP_NUM=16` + `PRESERVE_BOOT=1` (BL locks early slots); LP/PSRAM/HP peri grants via `board_pmp.c` |
+| Display | EK79007: VPG bring-up then **DW_GDMA→DPI** PSRAM RGB565 (1024×600) |
+| Touch | GT911 on I2C0 |
+| PMP | 16 slots; unlocked roles remapped around locked boot entries; TOR user RAM |
 | IRQ | `ULMK_ARCH_HAVE_CLIC=1`, MTVT vectored, ≤32 CPU IRQs |
 | HIL | `esptool` + serial capture (host + `source $IDF_PATH/export.sh`) |
 
@@ -43,7 +32,15 @@ export ESP_IDF_PATH=$IDF_PATH
 source "$IDF_PATH/export.sh"
 ```
 
-Prebuilt bootloader + partition table: `scripts/prebuilt/`.
+Prebuilt bootloader + partition table: `scripts/prebuilt/`
+(bootloader flash size 16 MB; factory app partition 3 MiB — see
+`scripts/partitions.csv`).
+
+LVGL for `board_lvgl_benchmark` is a board-local submodule:
+
+```bash
+git submodule update --init esp32p4_ev_function/deps/lvgl
+```
 
 ## Build / flash
 
@@ -93,13 +90,19 @@ $CAP $ELF 'tx id=.*rx id=' 15
 $CAP $ELF 'touch waiting|gt911|display touch' 15
 $CAP $ELF 'psram axi ok' 15
 $CAP $ELF 'PMP_NEG: PASS' 15
-```
+$CAP $ELF 'GDMA_AXI: PASS' 15
 
-`board_lvgl_benchmark` is a **soft-FB flip stub**, not real LVGL — do not use it as a product demo.
+# LVGL v9.5 DIRECT dual-FB benchmark (splash + scenes; needs PSRAM)
+python3 tools/dev.py build --board $BOARD --clean --no-components \
+  --component board_lvgl_benchmark
+$CAP $ELF 'lvgl bench DONE scenes=' 220
+```
 
 Components: `hello_world`, `board_blinky`, `board_pwm_backlight`, `board_adc_scan`,
 `board_spi_loopback`, `board_can_loopback`, `board_display_hello`,
-`board_display_touch`, `board_pmp_neg` (+ stub `board_lvgl_benchmark`).
+`board_display_touch`, `board_pmp_neg`, `board_gdma_axi_memcpy`,
+`board_lvgl_benchmark`.
+
 ## Drivers
 
 | Driver | Notes |
@@ -109,20 +112,25 @@ Components: `hello_world`, `board_blinky`, `board_pwm_backlight`, `board_adc_sca
 | `pwm` | LEDC MMIO (XTAL), backlight GPIO26 via pinmux |
 | `adc` | ADC-Digi continuous over AHB-PDMA; REGI2C biases the SAR front-end |
 | `uart` | UART1 server (USJ console unchanged) |
-| `i2c` / `touch` | I2C0 HW + GT911 X/Y |
+| `i2c` / `touch` | I2C0 HW (P4 RSTART=6) + GT911 |
 | `spi` | Multi-instance **GPSPI2/3** full-duplex over independent GDMA-AXI pairs |
 | `dma` | AHB-PDMA, per-channel: memcpy plus peripheral RX (arm/wait) |
 | `gdma_axi` | AXI-PDMA: memcpy plus independent GPSPI2/3 RX/TX pairs |
 | `can` | TWAI0 self-test loopback (`tx id=` + `rx id=`) |
-| `display` / `dsi` | EK79007: VPG bring-up → `dsi_fb_start` DW_GDMA→DPI FB |
-| `board_lvgl_benchmark` | **Stub only** (soft FB flips) — not LVGL |
+| `display` / `dsi` | EK79007 → `dsi_fb_start`; attach rearm always acks; `display_present` waits next frame |
+| `board_lvgl_benchmark` | LVGL 9.5 DIRECT dual-FB in PSRAM; SW render `-Ofast`; GT911 indev |
+
 ## Notes
 
 - CLIC: save/restore `mcause` + drop `mintstatus` before preempting from tick.
 - MSPI is exclusive to PSRAM/flash — do not use GPSPI for those.
 - SPI GPSPI2: `trans_done` is bit 12 (not bit 0); soft loopback needs MOSI `IE`.
-- PSRAM AXI: err_resp before map; config then MMU; no pre-smoke invalidate;
-  HIL `psram axi ok`.
-- PMP: `PRESERVE_BOOT` keeps BL slots; overlay only grants, so `board_pmp_neg`
-  proves faults are caught, not that threads are isolated. See the WIP note.
+- PSRAM: pad drive=2 on all pins; DQS phase/delayline tune (IDF path) then AXI
+  refine; HIL expects `psram tune ok` and `psram axi ok`.
+- Rev1 HP SRAM has a ROM hole (`0x4FF2CBD0`..`0x4FF40000`) holding
+  `rom_spiflash_legacy_*` — do not place `.bss` there.
+- Kernel/trap live in `KERNEL_IRAM` (bootloader loads the SRAM segment);
+  userspace stays XIP through L1/L2.
+- LVGL heap at `0x48268000` (5 MiB) after dual FBs + 64 KiB guard.
+- PMP: unlocked slot map + TOR user RAM; locked boot slots 0–2/15 preserved.
 - SMP out of scope for this board track.

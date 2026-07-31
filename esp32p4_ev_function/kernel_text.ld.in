@@ -1,0 +1,27 @@
+/*
+ * esp32p4_ev_function/kernel_text.ld.in — Layer 3 override.
+ *
+ * Same selection as the Layer 1 fragment, but resident in SRAM: syscalls and
+ * ISR exits must not contend for L2 lines with the 1.1 MB of XIP userspace
+ * code.  Loaded by the 2nd stage bootloader (VMA in SRAM), and KERNEL_IRAM
+ * is memory nothing else can use (see memory.ld), so this costs no heap.
+ */
+
+    .kernel_text : ALIGN(32) {
+        _ulmk_kernel_text_start = .;
+        *libulmk_kernel.a:(.text .text.* .rodata.* .rodata)
+        . = ALIGN(ULMK_MPU_ALIGN);
+        _ulmk_kernel_text_end = .;
+        _ulmk_kernel_exec_end = .;
+    } > KERNEL_IRAM
+
+    /*
+     * Bring the location counter back to KERNEL_FLASH.  The generator takes
+     * _ulmk_user_text_start from the dot right after this fragment, and that
+     * symbol is the lower bound of the PMP window U-mode fetches through —
+     * left pointing at SRAM, every userspace thread traps on its first
+     * instruction.  Userspace text stays XIP.
+     */
+    .user_text_anchor : ALIGN(32) {
+        LONG(0); /* an empty output section is dropped and moves no dot */
+    } > KERNEL_FLASH

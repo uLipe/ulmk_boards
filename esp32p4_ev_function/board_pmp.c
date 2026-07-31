@@ -11,7 +11,7 @@
 #define LP_WIN_BASE		0x50100000u
 #define LP_WIN_SIZE		0x00040000u /* 256 KiB */
 #define PSRAM_WIN_BASE		ULMK_BOARD_PSRAM_BASE
-#define PSRAM_WIN_SIZE		0x00400000u /* 4 MiB cover for dual FB */
+#define PSRAM_WIN_SIZE		0x00800000u /* 8 MiB — FBs + LVGL heap */
 /* Non-cache alias (SOC_NON_CACHEABLE_OFFSET) — CPU paint without writeback. */
 #define PSRAM_NC_BASE		(ULMK_BOARD_PSRAM_BASE + 0x40000000u)
 #define PSRAM_NC_SIZE		PSRAM_WIN_SIZE

@@ -16,6 +16,11 @@ void dsi_host_dump(void);
 /* Stream FB to panel (requires AXI PSRAM). nbytes >= 1024*600*2. */
 int dsi_fb_start(void *fb, uint32_t nbytes);
 int dsi_fb_set(void *fb);
+/*
+ * Point DMA at @fb and block until the next DW_GDMA rearm consumes it.
+ * Requires dsi_fb_start() first.  Returns 0 or -1.
+ */
+int dsi_fb_present(void *fb);
 int dsi_fb_ready(void);
 
 /* Sample DMA frame rate + dump DMA/bridge/host state over window_ms. */

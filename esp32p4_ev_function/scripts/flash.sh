@@ -18,7 +18,7 @@ if [[ ! -f "$BIN" ]] || [[ "$ELF" -nt "$BIN" ]]; then
 	$ESPTOOL --chip "${ULMK_HIL_CHIP}" elf2image \
 		--use_segments \
 		--min-rev-full 0 --max-rev-full 65535 \
-		--flash_mode dio --flash_freq 80m --flash_size 2MB \
+		--flash_mode dio --flash_freq 80m --flash_size 16MB \
 		-o "$BIN" "$ELF"
 fi
 

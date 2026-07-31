@@ -111,6 +111,7 @@ int display_present(const void *fb)
 {
 	ulmk_msg_t msg;
 
-	(void)fb;
-	return display_info(&msg);
+	if (!fb)
+		return ULMK_EINVAL;
+	return display_call(DISPLAY_MSG_PRESENT, (uint32_t)(uintptr_t)fb, &msg);
 }

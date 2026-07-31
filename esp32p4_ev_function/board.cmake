@@ -56,7 +56,11 @@ endif()
 
 set(ULMK_BOARD_ESP_IDF_PATH "${ESP_IDF_PATH}" CACHE PATH "ESP-IDF root")
 
+# optimize.cmake only covers kernel/arch, so board sources would otherwise
+# build at the toolchain default (-O0): drivers, cache maintenance and the
+# DW_GDMA rearm callback all sit on the per-frame path of the LVGL benchmark.
 set(ULMK_BOARD_CFLAGS
+	"-Ofast"
 	"-DESP_PLATFORM"
 	"-DCONFIG_IDF_TARGET_ESP32P4=1"
 )
@@ -110,8 +114,10 @@ set(ULMK_BOARD_SOURCES
 	board_irq.c
 	board_tick.c
 	board_psram.c
+	board_psram_tune.c
 	board_cache.c
 	board_mpll.c
+	board_cpu_clk.c
 	board_leds.c
 	board_lcd.c
 	drivers/dsi/src/dsi.c

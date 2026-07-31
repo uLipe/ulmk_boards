@@ -14,6 +14,7 @@ enum {
 	DISPLAY_MSG_FB    = 4u,	/* words[0] = idx  -> pointer */
 	DISPLAY_MSG_INFO  = 5u,	/* -> w, h, in_psram */
 	DISPLAY_MSG_FB_NC = 6u,	/* words[0] = cached -> nc pointer */
+	DISPLAY_MSG_PRESENT = 7u, /* words[0] = fb ptr; wait next DMA frame */
 };
 
 extern ulmk_ep_t g_display_eps[DISPLAY_MAX_INST];

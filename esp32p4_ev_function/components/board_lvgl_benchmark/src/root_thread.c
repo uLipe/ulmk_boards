@@ -1,29 +1,70 @@
 /* SPDX-License-Identifier: MIT */
 #include <ulmk/microkernel.h>
 #include <display.h>
+#include <touch.h>
 #include "board_console.h"
 #include "board_services.h"
-#include "board_timer.h"
+#include "board_config.h"
+#include "app_benchmark.h"
+
+/*
+ * Kernel root stack is 16 KiB on this board.  Scrolling / opa_layered SW
+ * blend need a deep stack — run the demo on a dedicated DRIVER thread.
+ */
+#define LVGL_BENCH_STACK	(128u * 1024u)
+
+static void lvgl_bench_thread(void *arg)
+{
+	(void)arg;
+	board_console_puts("lvgl_bench running\r\n");
+	app_benchmark_run();
+	ulmk_thread_exit();
+}
 
 void ulmk_root_thread(const ulmk_boot_info_t *info)
 {
-	uint32_t frames;
-	uint32_t i;
+	ulmk_thread_attr_t attr;
+	ulmk_tid_t tid;
 
 	board_services_init(info);
+	board_console_puts("\r\nlvgl benchmark boot\r\n");
+
 	if (display_init(0u) == ULMK_TID_INVALID) {
-		board_console_puts("LVGL: display init failed\r\n");
+		board_console_puts("display init failed\r\n");
 		ulmk_thread_exit();
 	}
-	board_console_puts("LVGL stub (soft FB flips — not real LVGL)\r\n");
-	frames = 0u;
-	for (i = 0u; i < 30u; i++) {
-		(void)display_flip();
-		frames++;
-		board_timer_sleep_us(33000u); /* ~30 FPS cadence */
+	(void)display_on(1);
+
+	if (!display_fb_in_psram()) {
+		board_console_puts("lvgl: PSRAM FB required\r\n");
+		ulmk_thread_exit();
 	}
-	board_console_printf("LVGL FPS approx=%u\r\n",
-			     (unsigned)(frames * 1000u / 990u));
-	for (;;)
-		board_timer_sleep_us(1000000u);
+
+	if (touch_init(0u) == ULMK_TID_INVALID) {
+		board_console_puts("touch init failed\r\n");
+		ulmk_thread_exit();
+	}
+
+	attr = (ulmk_thread_attr_t){
+		.name = "lvgl_bench",
+		.entry = lvgl_bench_thread,
+		.arg = NULL,
+		.priority = 10u,
+		.stack_size = LVGL_BENCH_STACK,
+		.privilege = ULMK_PRIV_DRIVER,
+		.heap_size = 0u,
+		.cpu = 0u,
+	};
+	tid = ulmk_thread_create(&attr);
+	if (tid == ULMK_TID_INVALID) {
+		board_console_puts("lvgl_bench spawn failed\r\n");
+		ulmk_thread_exit();
+	}
+	if (ulmk_cap_grant(tid, ULMK_CAP_MAP_SHARED | ULMK_CAP_MAP_PERIPH |
+				 ULMK_CAP_IRQ) != ULMK_OK) {
+		board_console_puts("lvgl_bench cap grant failed\r\n");
+		ulmk_thread_exit();
+	}
+	board_console_puts("lvgl_bench spawned\r\n");
+	ulmk_thread_exit();
 }

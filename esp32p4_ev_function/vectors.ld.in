@@ -1,0 +1,18 @@
+/*
+ * esp32p4_ev_function/vectors.ld.in — Layer 3 override of the RISC-V vectors.
+ *
+ * Entry and trap entry run from SRAM, not from flash XIP: a trap taken while
+ * the L2 is busy streaming LVGL pixels would otherwise fetch its own handler
+ * over the QSPI bus.  The 2nd stage bootloader loads any segment whose VMA is
+ * in SRAM before jumping to the entry point, so no copy loop is needed.
+ */
+
+    .startup : {
+        KEEP(*(.text._start))
+        _ulmk_kernel_exec_start = .;
+    } > KERNEL_IRAM
+
+    .trap : ALIGN(4) {
+        KEEP(*(.text.trap))
+        _ulmk_trap_entry = .;
+    } > KERNEL_IRAM

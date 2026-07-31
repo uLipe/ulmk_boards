@@ -1,3 +1,6 @@
 [submodule "witte_linum/deps/lvgl"]
 	path = witte_linum/deps/lvgl
 	url = https://github.com/lvgl/lvgl.git
+[submodule "esp32p4_ev_function/deps/lvgl"]
+	path = esp32p4_ev_function/deps/lvgl
+	url = https://github.com/lvgl/lvgl.git

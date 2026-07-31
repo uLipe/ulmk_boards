@@ -116,3 +116,46 @@ void board_dcache_invalidate(const void *addr, size_t size)
 {
 	(void)ulmk_dcache_invalidate(addr, size);
 }
+
+void board_dcache_clean_invalidate(const void *addr, size_t size)
+{
+	(void)ulmk_dcache_clean_invalidate(addr, size);
+}
+
+/*
+ * Coalesce a partial rectangle into the full-width strip covering it: one
+ * syscall instead of h, at the cost of writing back the untouched pixels
+ * on either side.  The syscall overhead dominates for the tall, narrow
+ * rectangles LVGL DIRECT produces.
+ */
+static void area_op(void (*op)(const void *, size_t), void *buf,
+		    uint32_t stride, int32_t x, int32_t y, int32_t w,
+		    int32_t h, uint32_t px_size)
+{
+	uint8_t *row;
+
+	(void)x;
+	(void)px_size;
+
+	if (!buf || !op || w <= 0 || h <= 0 || stride == 0u)
+		return;
+
+	row = (uint8_t *)buf + (uint32_t)y * stride;
+	op(row, (size_t)h * (size_t)stride);
+}
+
+void board_dcache_clean_area(void *buf, uint32_t stride,
+			     int32_t x, int32_t y, int32_t w, int32_t h,
+			     uint32_t px_size)
+{
+	area_op(board_dcache_clean, buf, stride, x, y, w, h, px_size);
+}
+
+void board_dcache_clean_invalidate_area(void *buf, uint32_t stride,
+					int32_t x, int32_t y,
+					int32_t w, int32_t h,
+					uint32_t px_size)
+{
+	area_op(board_dcache_clean_invalidate, buf, stride, x, y, w, h,
+		px_size);
+}

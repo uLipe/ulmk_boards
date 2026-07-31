@@ -100,6 +100,8 @@ static struct dsi_lli g_lli;
 static volatile void *g_fb;
 static volatile int g_fb_on;
 static volatile uint32_t g_rearms;
+static volatile uint32_t g_present_timeouts;
+static ulmk_notif_t g_frame_notif = ULMK_NOTIF_INVALID;
 static int g_irq_bound;
 
 static inline void wr(uint32_t a, uint32_t v)
@@ -225,8 +227,13 @@ static void bridge_dma_cfg(void)
 /*
  * ISR fast path (ulmk_irq_attach_hw): the LLI must be revalidated and the
  * channel restarted before the DPI bridge drains, so this cannot wait for a
- * worker wakeup.  No syscalls here.  Returning false keeps ownership of the
- * peripheral ack/rearm and asks for no notification — nothing waits on one.
+ * worker wakeup.  No syscalls here.
+ *
+ * Always return true.  The kernel only acknowledges the source on the
+ * notifying path, so returning false leaves the controller pending bit set
+ * for that frame; one race there and the edge is lost for good, the channel
+ * is never rearmed again and display_present() blocks forever.  Signalling
+ * every rearm is cheap — presenters drain the notification before waiting.
  */
 static bool dw_gdma_rearm(void *data)
 {
@@ -237,14 +244,15 @@ static bool dw_gdma_rearm(void *data)
 		return false;
 
 	st = rd(CH_INT_ST0);
+	if (st != 0u)
+		wr(CH_INT_CLR0, st);
 	if ((st & DMA_TFR_DONE) == 0u)
-		return false;
+		return true;
 
-	wr(CH_INT_CLR0, st);
 	lli_revalidate();
 	channel_start();
 	g_rearms++;
-	return false;
+	return true;
 }
 
 int dsi_fb_start(void *fb, uint32_t nbytes)
@@ -269,6 +277,7 @@ int dsi_fb_start(void *fb, uint32_t nbytes)
 				       ULMK_BOARD_CLIC_IRQ_DW_GDMA * 4u);
 		if ((int32_t)n < 0 && (int32_t)n >= -16)
 			return -1;
+		g_frame_notif = n;
 		if (ulmk_irq_enable(ULMK_BOARD_IRQ_DW_GDMA) != ULMK_OK)
 			return -1;
 		g_irq_bound = 1;
@@ -329,10 +338,11 @@ void dsi_fb_diag(uint32_t window_ms)
 	 * must show ~60.  Much higher = handshake ignored (FIFO overrun),
 	 * 0 = channel stalled.
 	 */
-	board_console_printf("ulmk: dsi diag frames=%u/%ums chen=0x%x llp=0x%08x\n",
+	board_console_printf("ulmk: dsi diag frames=%u/%ums chen=0x%x llp=0x%08x "
+		   "pto=%u\n",
 		   (unsigned)(after - before), (unsigned)window_ms,
 		   (unsigned)(rd(DMAC_CHEN0) & 0xFu),
-		   (unsigned)rd(CH_LLP0));
+		   (unsigned)rd(CH_LLP0), (unsigned)g_present_timeouts);
 	board_console_printf("ulmk: dsi diag sar=0x%08x->0x%08x intst=0x%08x "
 		   "ctl1=0x%08x\n",
 		   (unsigned)sar_a, (unsigned)sar_b,
@@ -352,6 +362,35 @@ int dsi_fb_set(void *fb)
 	if (!g_fb_on || !fb)
 		return -1;
 	g_fb = fb;
+	return 0;
+}
+
+int dsi_fb_present(void *fb)
+{
+	uint32_t bits = 0u;
+	int rc;
+
+	if (!g_fb_on || !fb || g_frame_notif == ULMK_NOTIF_INVALID)
+		return -1;
+
+	g_fb = fb;
+	__asm__ volatile("fence rw, rw" ::: "memory");
+
+	/*
+	 * Drop rearms that happened while the frame was being drawn: only a
+	 * rearm observed after the new SAR was published gates this present.
+	 */
+	(void)ulmk_notif_poll(g_frame_notif, 1u);
+
+	/*
+	 * Bounded: a lost frame must degrade into a late frame, never into a
+	 * wedged rendering thread.  One panel period is 16.7 ms.
+	 */
+	rc = ulmk_notif_wait_timeout(g_frame_notif, 1u, &bits, 100u);
+	if (rc != ULMK_OK) {
+		g_present_timeouts++;
+		return -1;
+	}
 	return 0;
 }
 

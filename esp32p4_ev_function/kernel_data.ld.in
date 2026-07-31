@@ -1,6 +1,12 @@
-/* ESP32-P4: .data LMA fixed to next 64 KiB flash page. */
+/*
+ * ESP32-P4: .data LMA must sit on a 64 KiB flash MMU page.  With large
+ * components (LVGL) the first page is full of text, so pad to the next
+ * page after all flash-resident sections above.
+ */
+    __ulmk_kernel_data_lma = ALIGN(LOADADDR(.domain_table) +
+				   SIZEOF(.domain_table), 0x10000);
     __ulmk_kernel_data_load = LOADADDR(.kernel_data);
-    .kernel_data : AT(0x40010000) {
+    .kernel_data : AT(__ulmk_kernel_data_lma) {
         . = ALIGN(ULMK_MPU_ALIGN);
         _ulmk_kernel_data_start = .;
         *libulmk_kernel.a:(.data.* .data)
