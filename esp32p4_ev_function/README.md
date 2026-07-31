@@ -1,10 +1,10 @@
 # ESP32-P4 Function EV Board
 
-BSP `esp32p4_ev_function` — UP only. Boot: ROM → IDF bootloader @ `0x2000` →
-partition @ `0x8000` → ulmk app @ `0x10000`. Toolchain: `riscv32-esp-elf`
-from ESP-IDF (`ESP_IDF_PATH` / `IDF_PATH`). Drivers use HAL/LL/SOC headers +
-ROM PROVIDE — **no** `libidf` / FreeRTOS link. Host build
-(`UL_BOARD_HOST_BUILD=1`); not in the QEMU container.
+BSP `esp32p4_ev_function` — dual-core (UP by default; `--enable-smp` for
+CPU1). Boot: ROM → IDF bootloader @ `0x2000` → partition @ `0x8000` → ulmk
+app @ `0x10000`. Toolchain: `riscv32-esp-elf` from ESP-IDF (`ESP_IDF_PATH` /
+`IDF_PATH`). Drivers use HAL/LL/SOC headers + ROM PROVIDE — **no** `libidf` /
+FreeRTOS link. Host build (`UL_BOARD_HOST_BUILD=1`); not in the QEMU container.
 
 | Item | Value |
 |------|--------|
@@ -101,7 +101,26 @@ $CAP $ELF 'lvgl bench DONE scenes=' 220
 Components: `hello_world`, `board_blinky`, `board_pwm_backlight`, `board_adc_scan`,
 `board_spi_loopback`, `board_can_loopback`, `board_display_hello`,
 `board_display_touch`, `board_pmp_neg`, `board_gdma_axi_memcpy`,
-`board_lvgl_benchmark`.
+`board_lvgl_benchmark`, `smp_affinity_console`, `smp_display_touch`.
+
+## SMP
+
+`ULMK_ARCH_NUM_CPU=2`. With `--enable-smp` the arch calls
+`ulmk_board_cpu_start()` (unstall + core1 clock + `ets_set_appcpu_boot_addr`)
+and soft-IPIs via `HP_SYSTEM_CPU_INT_FROM_CPU_*` → INTMTX → CLIC IRQ 15.
+QEMU RISC-V keeps the CLINT MSIP path; this board never uses CLINT.
+
+```bash
+python3 tools/dev.py build --board ../ulmk_boards/esp32p4_ev_function \
+	--clean --enable-smp --no-components --component silicon_smp_smoke
+bash ../ulmk_boards/esp32p4_ev_function/scripts/hil-silicon-smp-smoke.sh \
+	$BUILD_DIR/ulmk
+# expect: SILICON_SMP_SMOKE: PASS
+
+python3 tools/dev.py build --board ../ulmk_boards/esp32p4_ev_function \
+	--clean --enable-smp --no-components --component smp_affinity_console
+# expect: hello on CPU0 / hello on CPU1
+```
 
 ## Drivers
 
@@ -133,4 +152,3 @@ Components: `hello_world`, `board_blinky`, `board_pwm_backlight`, `board_adc_sca
   userspace stays XIP through L1/L2.
 - LVGL heap at `0x48268000` (5 MiB) after dual FBs + 64 KiB guard.
 - PMP: unlocked slot map + TOR user RAM; locked boot slots 0–2/15 preserved.
-- SMP out of scope for this board track.

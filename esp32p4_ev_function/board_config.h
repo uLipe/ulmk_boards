@@ -5,12 +5,25 @@
 #ifndef ULMK_BOARD_CONFIG_H
 #define ULMK_BOARD_CONFIG_H
 
+/*
+ * Dual-core SoC.  UP builds still compile with NUM_CPU=2 but only CPU0 is
+ * started unless ULMK_CONFIG_ENABLE_SMP=1.
+ */
 #ifndef ULMK_ARCH_NUM_CPU
-#define ULMK_ARCH_NUM_CPU		1
+#define ULMK_ARCH_NUM_CPU		2
 #endif
 
 #ifndef ULMK_ARCH_HAVE_CLINT
 #define ULMK_ARCH_HAVE_CLINT		0
+#endif
+
+/* Soft IPI via HP_SYSTEM + INTMTX + CLIC (no CLINT MSIP on this SoC). */
+#ifndef ULMK_ARCH_HAVE_BOARD_IPI
+#define ULMK_ARCH_HAVE_BOARD_IPI	1
+#endif
+
+#ifndef ULMK_ARCH_HAVE_BOARD_CPU_START
+#define ULMK_ARCH_HAVE_BOARD_CPU_START	1
 #endif
 
 #ifndef ULMK_ARCH_HAVE_PLIC
@@ -85,10 +98,16 @@
 #define ULMK_BOARD_SYSTIMER_BASE	0x500E2000u
 #define ULMK_BOARD_FCPU_HZ		400000000u
 
-/* Interrupt matrix (HP) — soc/interrupts.h (alias ETS_LP_TSENS does not bump). */
+/*
+ * Interrupt matrix (HP): core0 @ base, core1 @ base+0x800
+ * (DR_REG_INTERRUPT_CORE1_BASE).
+ */
 #define ULMK_BOARD_INTMTX_BASE		0x500D6000u
+#define ULMK_BOARD_INTMTX_CORE_STRIDE	0x800u
 #define ETS_UART0_INTR_SOURCE			31u
 #define ETS_SYSTIMER_TARGET0_INTR_SOURCE	53u
+#define ETS_FROM_CPU_INTR0_SOURCE		79u
+#define ETS_FROM_CPU_INTR1_SOURCE		80u
 
 /* CPU CLIC IRQ slots reserved for board (external; keep < 32). */
 #define ULMK_BOARD_CLIC_IRQ_TICK		16u
@@ -104,6 +123,8 @@
 #define ULMK_BOARD_CLIC_IRQ_AXI_PDMA_OUT_CH1	29u
 #define ULMK_BOARD_CLIC_IRQ_AXI_PDMA_IN_CH2	30u
 #define ULMK_BOARD_CLIC_IRQ_AXI_PDMA_OUT_CH2	31u
+/* Soft IPI — external CLIC lines start at 16; 16..31 are peripherals. */
+#define ULMK_BOARD_CLIC_IRQ_IPI			32u
 #define ULMK_BOARD_IRQ_TICK			1u
 #define ULMK_BOARD_IRQ_I2C0			2u
 #define ULMK_BOARD_IRQ_DW_GDMA			3u
@@ -116,6 +137,14 @@
 #define ULMK_BOARD_IRQ_AXI_PDMA_OUT_CH1		14u
 #define ULMK_BOARD_IRQ_AXI_PDMA_IN_CH2		15u
 #define ULMK_BOARD_IRQ_AXI_PDMA_OUT_CH2		16u
+#define ULMK_BOARD_IRQ_IPI			17u
+
+/* HP_SYSTEM soft-IRQ registers (cross-core). */
+#define ULMK_BOARD_HP_SYS_BASE			0x500E5000u
+#define ULMK_BOARD_HP_FROM_CPU0_REG \
+	(ULMK_BOARD_HP_SYS_BASE + 0x10u)
+#define ULMK_BOARD_HP_FROM_CPU1_REG \
+	(ULMK_BOARD_HP_SYS_BASE + 0x14u)
 
 #define ETS_I2C0_INTR_SOURCE			44u
 #define ETS_DW_GDMA_INTR_SOURCE			24u

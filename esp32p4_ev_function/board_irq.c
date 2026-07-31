@@ -7,15 +7,23 @@
  * calls ulmk_board_irq_connect() from the bind path instead
  * (ULMK_CONFIG_BOARD_IRQ_CTRL=1), which keeps the table below as plain data
  * rather than a startup sequence that has to run before any driver binds.
+ *
+ * Each hart has its own INTMTX (core1 @ base+0x800).  Connect writes the
+ * matrix of the CPU that is executing the bind, so a server pinned to CPU1
+ * routes its lines onto that core's CLIC.
  */
 #include <stdint.h>
 #include <stdbool.h>
+#include <ulmk/config.h>
 #include <ulmk/microkernel.h>
 #include <ulmk/board.h>
 #include <ulmk_arch.h>
 #include "board_config.h"
 
 extern void ulmk_kern_timer_tick(void);
+#if ULMK_CONFIG_ENABLE_SMP
+extern void ulmk_kern_ipi_from_isr(void);
+#endif
 
 /* Board IRQ line -> {peripheral source, CLIC slot}. */
 static const struct {
@@ -62,9 +70,15 @@ static const struct {
 static void intmtx_set(uint8_t source, uint8_t cpu_irq)
 {
 	volatile uint32_t *map;
+	uintptr_t base;
+	uint32_t cpu;
 
-	map = (volatile uint32_t *)(uintptr_t)
-		(ULMK_BOARD_INTMTX_BASE + 4u * (uint32_t)source);
+	cpu = ulmk_arch_cpu_id();
+	if (cpu >= (uint32_t)ULMK_ARCH_NUM_CPU)
+		cpu = 0u;
+	base = (uintptr_t)ULMK_BOARD_INTMTX_BASE +
+	       (uintptr_t)cpu * (uintptr_t)ULMK_BOARD_INTMTX_CORE_STRIDE;
+	map = (volatile uint32_t *)(base + 4u * (uint32_t)source);
 	*map = (*map & ~0x3Fu) | ((uint32_t)cpu_irq & 0x3Fu);
 }
 
@@ -97,6 +111,13 @@ bool ulmk_board_irq_claim(uint32_t irq)
 		ulmk_kern_timer_tick();
 		return true;
 	}
+#if ULMK_CONFIG_ENABLE_SMP && ULMK_ARCH_HAVE_BOARD_IPI
+	if (irq == ULMK_BOARD_CLIC_IRQ_IPI) {
+		ulmk_arch_ipi_clear_self();
+		ulmk_kern_ipi_from_isr();
+		return true;
+	}
+#endif
 	/*
 	 * Everything else is a driver binding: let the generic CLIC path
 	 * dispatch it (bind → notif, or attach → callback) and ack.

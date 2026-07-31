@@ -113,6 +113,7 @@ set(ULMK_BOARD_SOURCES
 	board_services.c
 	board_irq.c
 	board_tick.c
+	board_smp.c
 	board_psram.c
 	board_psram_tune.c
 	board_cache.c

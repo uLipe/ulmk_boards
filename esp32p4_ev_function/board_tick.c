@@ -67,6 +67,16 @@ void ulmk_board_tick_init(uint32_t tick_hz)
 	uint32_t conf;
 	volatile uint32_t *clk2;
 
+	/*
+	 * SYSTIMER is shared.  Only CPU0 programs TARGET0; secondaries rely
+	 * on board IPIs for remote wake and skip the hardware tick.
+	 */
+	if (ulmk_arch_cpu_id() != 0u) {
+		*(volatile uint32_t *)(uintptr_t)CLIC_INT_THRESH_REG = 0u;
+		__asm__ volatile("csrs mstatus, %0" :: "r"(1u << 3));
+		return;
+	}
+
 	if (tick_hz == 0u)
 		tick_hz = 1000u;
 
