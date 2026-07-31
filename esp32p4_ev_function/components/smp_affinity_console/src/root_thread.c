@@ -4,6 +4,10 @@
  *
  * Build: --enable-smp --component smp_affinity_console
  * Expect: "on CPU0" and "on CPU1" in the UART capture.
+ *
+ * Spawn CPU0 first and wait for its hello before CPU1: concurrent
+ * board_console ep_calls from both harts can wedge the console server.
+ * Beats stay on CPU0 only so the periodic path does not reintroduce that.
  */
 #include <stdint.h>
 #include <ulmk/microkernel.h>
@@ -35,19 +39,34 @@ static void worker(void *arg)
 				     cpu);
 
 	for (;;) {
-		board_console_printf(
-			"smp_affinity_console: beat on CPU%u seq=%u\r\n",
-			cpu, seq);
-		seq++;
+		if (cpu == 0u) {
+			board_console_printf(
+				"smp_affinity_console: beat on CPU%u seq=%u\r\n",
+				cpu, seq);
+			seq++;
+		}
 		board_timer_sleep_us(PERIOD_US);
 	}
 }
 
+static ulmk_tid_t spawn_cpu(uint32_t cpu)
+{
+	ulmk_thread_attr_t attr = {0};
+
+	attr.name       = "hello_cpu";
+	attr.entry      = worker;
+	attr.arg        = (void *)(uintptr_t)cpu;
+	attr.priority   = 5u;
+	attr.stack_size = 2048u;
+	attr.privilege  = ULMK_PRIV_DRIVER;
+	attr.heap_size  = 0u;
+	attr.cpu        = (uint8_t)cpu;
+	return ulmk_thread_create(&attr);
+}
+
 void ulmk_root_thread(const ulmk_boot_info_t *info)
 {
-	ulmk_thread_attr_t attr;
-	ulmk_tid_t tid;
-	uint32_t cpu;
+	uint32_t spins;
 
 	board_services_init(info);
 	g_seen_mask = 0u;
@@ -67,22 +86,28 @@ void ulmk_root_thread(const ulmk_boot_info_t *info)
 		ulmk_thread_exit();
 	}
 
-	for (cpu = 0u; cpu < 2u; cpu++) {
-		attr.name       = "hello_cpu";
-		attr.entry      = worker;
-		attr.arg        = (void *)(uintptr_t)cpu;
-		attr.priority   = 5u;
-		attr.stack_size = 2048u;
-		attr.privilege  = ULMK_PRIV_DRIVER;
-		attr.heap_size  = 0u;
-		attr.cpu        = (uint8_t)cpu;
-		tid = ulmk_thread_create(&attr);
-		if (tid == ULMK_TID_INVALID) {
-			board_console_printf(
-				"smp_affinity_console: FAIL spawn CPU%u\r\n",
-				cpu);
-			ulmk_thread_exit();
-		}
+	if (spawn_cpu(0u) == ULMK_TID_INVALID) {
+		board_console_puts("smp_affinity_console: FAIL spawn CPU0\r\n");
+		ulmk_thread_exit();
+	}
+
+	/*
+	 * Block (do not prio-0 yield-spin) until CPU0 has printed — then
+	 * bring up CPU1 so the two hellos are not in flight together.
+	 */
+	for (spins = 0u; spins < 50u; spins++) {
+		if (g_seen_mask & 1u)
+			break;
+		board_timer_sleep_us(10000u);
+	}
+	if ((g_seen_mask & 1u) == 0u) {
+		board_console_puts("smp_affinity_console: FAIL CPU0 silent\r\n");
+		ulmk_thread_exit();
+	}
+
+	if (spawn_cpu(1u) == ULMK_TID_INVALID) {
+		board_console_puts("smp_affinity_console: FAIL spawn CPU1\r\n");
+		ulmk_thread_exit();
 	}
 
 	board_console_puts("smp_affinity_console: workers spawned\r\n");

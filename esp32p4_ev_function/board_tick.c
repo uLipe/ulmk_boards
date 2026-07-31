@@ -68,8 +68,9 @@ void ulmk_board_tick_init(uint32_t tick_hz)
 	volatile uint32_t *clk2;
 
 	/*
-	 * SYSTIMER is shared.  Only CPU0 programs TARGET0; secondaries rely
-	 * on board IPIs for remote wake and skip the hardware tick.
+	 * SYSTIMER is shared.  Only CPU0 programs TARGET0; secondaries skip
+	 * the hardware tick.  Arch returns timer_wheel_cpu=0 so sleeps on
+	 * CPU1 still land on CPU0's wheel; expire + IPI wakes the remote.
 	 */
 	if (ulmk_arch_cpu_id() != 0u) {
 		*(volatile uint32_t *)(uintptr_t)CLIC_INT_THRESH_REG = 0u;

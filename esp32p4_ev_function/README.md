@@ -101,7 +101,8 @@ $CAP $ELF 'lvgl bench DONE scenes=' 220
 Components: `hello_world`, `board_blinky`, `board_pwm_backlight`, `board_adc_scan`,
 `board_spi_loopback`, `board_can_loopback`, `board_display_hello`,
 `board_display_touch`, `board_pmp_neg`, `board_gdma_axi_memcpy`,
-`board_lvgl_benchmark`, `smp_affinity_console`, `smp_display_touch`.
+`board_lvgl_benchmark`, `smp_affinity_console`, `smp_display_touch`,
+`smp_spi_can`.
 
 ## SMP
 
@@ -124,6 +125,10 @@ bash ../ulmk_boards/esp32p4_ev_function/scripts/hil-silicon-e2e.sh $BUILD_DIR/ul
 python3 tools/dev.py build --board ../ulmk_boards/esp32p4_ev_function \
 	--clean --enable-smp --no-components --component smp_affinity_console
 # expect: hello on CPU0 / hello on CPU1
+
+python3 tools/dev.py build --board ../ulmk_boards/esp32p4_ev_function \
+	--clean --enable-smp --no-components --component smp_spi_can
+# expect: spi on CPU0 + SPI2: PASS; can on CPU1 + tx id=0x100
 ```
 
 ## Drivers
