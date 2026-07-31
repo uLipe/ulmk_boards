@@ -29,16 +29,12 @@ ulmk_ep_t board_service_ep(void)
 
 static void console_putc_hw(char c)
 {
-	if (g_uart0_ok) {
-		if (c == '\n')
-			(void)uart_tx_byte(0u, (uint8_t)'\r');
-		(void)uart_tx_byte(0u, (uint8_t)c);
-		return;
-	}
 	/*
-	 * Driver not up yet: fall back to the polled FIFO writer rather than
-	 * the ROM console, which is not reentrant across threads.
+	 * Always polled FIFO — never uart_tx_byte() from this server.
+	 * Nested ep_call into the UART driver + TXFIFO-empty notif deadlocks
+	 * once the FIFO fills (root → console → uart → notif_wait).
 	 */
+	(void)g_uart0_ok;
 	ulmk_printk_char_out(c);
 }
 

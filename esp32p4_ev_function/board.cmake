@@ -106,6 +106,7 @@ set(ULMK_BOARD_INCLUDES
 set(ULMK_BOARD_SOURCES
 	board_init.c
 	board_pmp.c
+	board_hil.c
 	board_app_desc.c
 	board_printk.c
 	board_console.c

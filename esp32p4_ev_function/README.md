@@ -118,6 +118,10 @@ bash ../ulmk_boards/esp32p4_ev_function/scripts/hil-silicon-smp-smoke.sh \
 # expect: SILICON_SMP_SMOKE: PASS
 
 python3 tools/dev.py build --board ../ulmk_boards/esp32p4_ev_function \
+	--clean --enable-smp --no-components --component silicon_e2e
+bash ../ulmk_boards/esp32p4_ev_function/scripts/hil-silicon-e2e.sh $BUILD_DIR/ulmk
+
+python3 tools/dev.py build --board ../ulmk_boards/esp32p4_ev_function \
 	--clean --enable-smp --no-components --component smp_affinity_console
 # expect: hello on CPU0 / hello on CPU1
 ```
