@@ -68,12 +68,38 @@ static void sync_op(uint32_t map, uint32_t trigger, uintptr_t a, uint32_t len)
 	}
 }
 
+/*
+ * Which levels a range lives in depends on the window it points at.  HP SRAM
+ * is still cached — it goes through L1 — but it never reaches L2, and handing
+ * the L2 engine an internal address wedges it: the next core to touch the
+ * cache path then stalls dead mid-instruction, before any trap can be taken.
+ * The external windows (flash XIP and PSRAM) go through both.
+ */
+#define EXT_CACHED_LO		0x40000000u
+#define EXT_CACHED_HI		0x4C000000u
+#define INT_SRAM_LO		0x4FF00000u
+#define INT_SRAM_HI		0x4FFC0000u
+
+static uint32_t sync_map_for(uintptr_t a)
+{
+	if (a >= EXT_CACHED_LO && a < EXT_CACHED_HI)
+		return SYNC_MAP_L1_DCACHE | SYNC_MAP_L2_CACHE;
+	if (a >= INT_SRAM_LO && a < INT_SRAM_HI)
+		return SYNC_MAP_L1_DCACHE;
+	return 0u;
+}
+
 static void sync_range(uint32_t trigger, void *addr, size_t size)
 {
 	uintptr_t a = (uintptr_t)addr;
 	uintptr_t end;
+	uint32_t map;
 
 	if (a == 0u || size == 0u)
+		return;
+
+	map = sync_map_for(a);
+	if (map == 0u)
 		return;
 
 	end = (a + size + CACHE_LINE - 1u) & ~(uintptr_t)(CACHE_LINE - 1u);
@@ -88,7 +114,8 @@ static void sync_range(uint32_t trigger, void *addr, size_t size)
 
 		key = ulmk_arch_cpu_irq_save();
 		sync_op(SYNC_MAP_L1_DCACHE, trigger, a, n);
-		sync_op(SYNC_MAP_L2_CACHE, trigger, a, n);
+		if (map & SYNC_MAP_L2_CACHE)
+			sync_op(SYNC_MAP_L2_CACHE, trigger, a, n);
 		ulmk_arch_cpu_irq_restore(key);
 
 		a += n;

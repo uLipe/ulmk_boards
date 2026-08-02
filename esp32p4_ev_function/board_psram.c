@@ -387,8 +387,17 @@ int board_psram_enable_axi(void)
 		}
 	}
 
-	board_dcache_invalidate((const void *)(uintptr_t)ULMK_BOARD_PSRAM_BASE,
-				4096u);
+	/*
+	 * Bring-up writes through the cached alias — the refine sweep at
+	 * +0x1000 and the r/w check at +0.  Every dirty line left behind is a
+	 * PSRAM writeback armed to fire at whatever unrelated store later
+	 * evicts it.  If the MSPI cannot serve that eviction the access retries
+	 * forever and takes the whole L1 with it: the core dies mid-instruction
+	 * with no trap, and even its internal-SRAM accesses stop.  Push them
+	 * out here, while this path is known good.
+	 */
+	board_dcache_clean_invalidate(
+		(const void *)(uintptr_t)ULMK_BOARD_PSRAM_BASE, 8192u);
 
 	g_axi_ok = 1;
 	board_console_printf("ulmk: psram axi ok base=0x%08x\n",
