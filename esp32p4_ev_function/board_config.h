@@ -70,14 +70,20 @@
  * and pmp_clear_all() steps over the locked entries on its own.
  *
  * User RAM starts right above kernel RAM and is neither power-of-two sized
- * nor aligned, so it needs TOR (slot 6 carries the lower bound).  MMIO shares
- * the board's HP peripheral slot — same window, no reason to spend a second.
+ * nor aligned, so NAPOT rounds its window out over kernel RAM and the ROM
+ * data below it.  TOR (slot 6 carrying the lower bound) draws the line
+ * exactly, but this board cannot take it yet: PSRAM/MSPI bring-up and the
+ * CPLL switch run in the root thread and call ROM routines that read and
+ * write ROM globals, which sit outside any window U-mode is entitled to.
+ * Moving that bring-up into ulmk_board_init() is the prerequisite; until
+ * then U-mode keeps read/write over the whole of internal SRAM here.
+ * MMIO shares the board's HP peripheral slot — no reason to spend a second.
  */
 #define ULMK_ARCH_PMP_KERNEL		3
 #define ULMK_ARCH_PMP_KRAM		4
 #define ULMK_ARCH_PMP_UTEXT		5
 #define ULMK_ARCH_PMP_URAM		7
-#define ULMK_ARCH_PMP_URAM_TOR		1
+#define ULMK_ARCH_PMP_URAM_TOR		0
 #define ULMK_ARCH_PMP_MMIO		13
 #define ULMK_ARCH_PMP_USER_BASE		8
 #define ULMK_ARCH_PMP_DYNAMIC_BASE	8
