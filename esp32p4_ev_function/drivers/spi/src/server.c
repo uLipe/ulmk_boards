@@ -300,6 +300,20 @@ static int spi_xfer_hw(struct spi_inst *spi, const uint8_t *tx,
 #define SPI_MSG_LOOP	2u
 #define SPI_IPC_MAX	16u
 
+/*
+ * DMA buffers get a cache line to themselves.  gdma_axi cleans the source and
+ * invalidates the destination around every transfer, and those operations act
+ * on the whole line — as stack arrays they took the caller's frame with them.
+ * Reach them through the cached alias only: the writeback would otherwise put
+ * a stale line back over whatever the uncached alias had just stored.
+ */
+#define SPI_DMA_LINE	64u
+
+static uint8_t g_dma_tx[ULMK_BOARD_SPI_MAX][SPI_DMA_LINE]
+	__attribute__((aligned(SPI_DMA_LINE)));
+static uint8_t g_dma_rx[ULMK_BOARD_SPI_MAX][SPI_DMA_LINE]
+	__attribute__((aligned(SPI_DMA_LINE)));
+
 static void spi_server(void *arg)
 {
 	uint8_t n = (uint8_t)(uintptr_t)arg;
@@ -308,8 +322,8 @@ static void spi_server(void *arg)
 	ulmk_msg_t msg;
 	ulmk_msg_t reply;
 	ulmk_tid_t sender;
-	uint8_t local_tx[SPI_IPC_MAX] __attribute__((aligned(4)));
-	uint8_t local_rx[SPI_IPC_MAX] __attribute__((aligned(4)));
+	uint8_t *local_tx = g_dma_tx[n];
+	uint8_t *local_rx = g_dma_rx[n];
 	uint32_t i;
 	uint32_t len;
 
@@ -342,7 +356,7 @@ static void spi_server(void *arg)
 
 			if (msg.label == SPI_MSG_LOOP)
 				spi_pins(spi, 1);
-			rc = spi_xfer_hw(spi, local_tx, local_rx, len);
+			rc = spi_xfer_hw(spi, g_dma_tx[n], g_dma_rx[n], len);
 			reply.words[0] = (uint32_t)rc;
 			if (rc == ULMK_OK) {
 				for (i = 0u; i < len; i++)
