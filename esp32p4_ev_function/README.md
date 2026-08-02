@@ -104,6 +104,20 @@ Components: `hello_world`, `board_blinky`, `board_pwm_backlight`, `board_adc_sca
 `board_lvgl_benchmark`, `smp_affinity_console`, `smp_display_touch`,
 `smp_spi_can`.
 
+## Chip layer (Layer 3)
+
+`generate_ld.py` picks up these optional fragments from this directory:
+
+| Fragment | Purpose |
+|--------|--------|
+| `memory.ld` | `KERNEL_IRAM` / `KERNEL_RAM` split around the rev1 ROM hole |
+| `vectors.ld.in`, `kernel_text.ld.in` | startup, traps and kernel text in `KERNEL_IRAM` (the bootloader loads that segment before entry) |
+| `kernel_data.ld.in` | flash LMA alignment for `.data` |
+
+Arch knobs live in `board_config.h`: `ULMK_ARCH_HAVE_CLIC=1`,
+`ULMK_ARCH_CLIC_VECTORED=1`, no CLINT and no PLIC, `ULMK_ARCH_PMP_NUM=16` with
+`ULMK_ARCH_PMP_PRESERVE_BOOT=1`. Tick is SYSTIMER → INTMTX → CLIC IRQ 16.
+
 ## SMP
 
 `ULMK_ARCH_NUM_CPU=2`. With `--enable-smp` the arch calls
@@ -150,6 +164,14 @@ python3 tools/dev.py build --board ../ulmk_boards/esp32p4_ev_function \
 
 ## Notes
 
+- D-cache maintenance must pick the level from the address: HP SRAM is cached
+  in L1 but never reaches L2, and giving the L2 sync engine an internal address
+  wedges it. The core that next touches the cache path then stalls dead
+  mid-instruction — no trap, no IPI response, `mepc` frozen on whatever last
+  retired — while the other core keeps running. Two peripherals doing
+  concurrent DMA hit this within seconds. See `sync_map_for()`.
+- Do not mix the uncached alias with `board_dcache_*` on the same buffer: the
+  writeback puts a stale line back over what the alias just stored.
 - CLIC: save/restore `mcause` + drop `mintstatus` before preempting from tick.
 - MSPI is exclusive to PSRAM/flash — do not use GPSPI for those.
 - SPI GPSPI2: `trans_done` is bit 12 (not bit 0); soft loopback needs MOSI `IE`.
