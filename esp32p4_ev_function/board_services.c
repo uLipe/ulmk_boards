@@ -18,6 +18,22 @@
 #define CONSOLE_MSG_WRITE		2u
 #define CONSOLE_WRITE_MAX		256u
 
+/*
+ * HP_SYSTEM bus-fault gating.  The ROM masks error responses for its MSPI-749
+ * boot workaround and never restores them; with them masked a core that hits a
+ * bus error stalls forever instead of trapping.
+ */
+#define HP_SYS_CORE_ERR_RESP_DIS	0x500E51A4u
+#define HP_SYS_AHB_TIMEOUT		0x500E5120u
+#define HP_SYS_IBUS_TIMEOUT		0x500E5124u
+#define HP_SYS_DBUS_TIMEOUT		0x500E5128u
+#define HP_SYS_TIMEOUT_ARM		0x1FFFFu	/* EN | THRES(max) */
+
+static inline void wr32(uint32_t a, uint32_t v)
+{
+	*(volatile uint32_t *)(uintptr_t)a = v;
+}
+
 #define UART0_FIFO		(ULMK_BOARD_UART0_BASE + 0x00u)
 #define UART0_STATUS		(ULMK_BOARD_UART0_BASE + 0x1cu)
 #define UART0_TXFIFO_SHIFT	16
@@ -113,7 +129,9 @@ void board_services_init(const ulmk_boot_info_t *info)
 	 * Bootloader leaves ~90 MHz.  Raise CPLL→400 MHz before anything
 	 * CPU-bound (PSRAM probe, LVGL SW render) runs.
 	 */
+	board_cpu_peer_stall(1u);
 	(void)board_cpu_clk_set_400m();
+	board_cpu_peer_unstall(1u);
 
 	g_ep = ulmk_ep_create();
 
@@ -136,6 +154,12 @@ void board_services_init(const ulmk_boot_info_t *info)
 	 * baseline board_services always attempt bring-up.
 	 */
 	(void)board_psram_init();
+	/* PSRAM bring-up masks these again; re-arm once the ROM is done. */
+	wr32(HP_SYS_CORE_ERR_RESP_DIS, 0u);
+	/* AHB/IBUS/DBUS timeout: EN | THRES(max) — a wedged beat must fault. */
+	wr32(HP_SYS_AHB_TIMEOUT, HP_SYS_TIMEOUT_ARM);
+	wr32(HP_SYS_IBUS_TIMEOUT, HP_SYS_TIMEOUT_ARM);
+	wr32(HP_SYS_DBUS_TIMEOUT, HP_SYS_TIMEOUT_ARM);
 
 	/*
 	 * Still bring up the UART0 driver for apps that use uart_* directly.

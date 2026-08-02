@@ -29,6 +29,13 @@ void board_pmp_allow_u_console(void);
 #define TIMG_WDT_EN		(1u << 31)
 #define TIMG_WDT_FLASHBOOT_EN	(1u << 14)
 
+/*
+ * ROM leaves ibus/dbus/ahb error responses masked (MSPI-749 boot workaround).
+ * With them masked a core that hits a bus error stalls forever instead of
+ * trapping — the fetch never retires and the hart stops answering IPIs.
+ */
+#define HP_SYS_CORE_ERR_RESP_DIS	0x500E51A4u
+
 static inline void wr32(uint32_t a, uint32_t v)
 {
 	*(volatile uint32_t *)(uintptr_t)a = v;
@@ -70,6 +77,7 @@ static void board_wdt_disable(void)
 void ulmk_board_init(void)
 {
 	board_wdt_disable();
+	wr32(HP_SYS_CORE_ERR_RESP_DIS, 0u);
 	board_pmp_allow_u_console();
 	board_console_early_puts("ulmk: board_init\n");
 }
