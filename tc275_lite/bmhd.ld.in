@@ -15,7 +15,15 @@
 	. = 0x20;
 } > KERNEL_FLASH AT > KERNEL_FLASH_NC
 
-.startup : {
+/*
+ * Pinned, not merely "next after .bmhd": BMHD.STAD in bmhd.c is a literal
+ * 0xA0000020 under a precomputed CRC, so a section slipped in between would
+ * make the BootROM jump into it.  ld places read-only orphans right after the
+ * first read-only section, and TriCore's -fdata-sections names a const array's
+ * section after the variable (".hex", no .rodata prefix), which no glob
+ * claims.  Pinning turns that into a link error instead of a dead board.
+ */
+.startup 0xA0000020 : {
 	KEEP(*(.text._start))
 	_ulmk_kernel_exec_start = .;
 } > KERNEL_FLASH AT > KERNEL_FLASH_NC

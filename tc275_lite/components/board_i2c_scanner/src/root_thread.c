@@ -26,7 +26,14 @@ static ulmk_notif_t g_req_notif __attribute__((section(".user_bss")));
 
 static void put_hex2(uint8_t v)
 {
-	static const char hex[] = "0123456789abcdef";
+	/*
+	 * Name the section: with -fdata-sections the TriCore backend calls a
+	 * named const array's section ".hex", with no .rodata prefix, so no
+	 * glob in the linker script claims it.  As an orphan it lands right
+	 * after .bmhd — ahead of _start, whose address BMHD.STAD hardcodes.
+	 */
+	static const char hex[] __attribute__((section(".rodata.hex"))) =
+		"0123456789abcdef";
 
 	board_console_putc(hex[(v >> 4) & 0xFu]);
 	board_console_putc(hex[v & 0xFu]);
