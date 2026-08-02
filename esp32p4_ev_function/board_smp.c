@@ -147,7 +147,7 @@ void ulmk_board_ipi_arm_self(void)
 	intmtx_route_cpu(cpu, source, (uint8_t)ULMK_BOARD_CLIC_IRQ_IPI);
 
 	*(volatile uint32_t *)(uintptr_t)(ULMK_BOARD_CLIC_BASE + 0x08u) = 0u;
-	*clic_attr(ULMK_BOARD_CLIC_IRQ_IPI) = 1u; /* SHV */
+	*clic_attr(ULMK_BOARD_CLIC_IRQ_IPI) = 0u; /* non-vectored */
 	*clic_ctl(ULMK_BOARD_CLIC_IRQ_IPI)  = (1u << 5);
 	*clic_ie(ULMK_BOARD_CLIC_IRQ_IPI)   = 1u;
 

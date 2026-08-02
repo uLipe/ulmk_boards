@@ -100,8 +100,9 @@ void ulmk_board_tick_init(uint32_t tick_hz)
 	 */
 	ulmk_board_irq_connect(ULMK_BOARD_IRQ_TICK);
 
-	/* Tick is board glue, not a driver: it owns its CLIC slot directly. */
-	*clic_attr(ULMK_BOARD_CLIC_IRQ_TICK) = 1u; /* SHV — MTVT entry */
+	/* Tick is board glue, not a driver: it owns its CLIC slot directly.
+	 * Same ctl level as every other line — see trap-irq-flat-priority. */
+	*clic_attr(ULMK_BOARD_CLIC_IRQ_TICK) = 0u; /* non-vectored */
 	*clic_ctl(ULMK_BOARD_CLIC_IRQ_TICK)  = (1u << 5);
 	*clic_ie(ULMK_BOARD_CLIC_IRQ_TICK)   = 1u;
 

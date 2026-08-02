@@ -20,10 +20,7 @@
 #include <ulmk_arch.h>
 #include "board_config.h"
 
-extern void ulmk_kern_timer_tick(void);
-#if ULMK_CONFIG_ENABLE_SMP
-extern void ulmk_kern_ipi_from_isr(void);
-#endif
+extern void ulmk_kern_timer_pulse(void);
 
 /* Board IRQ line -> {peripheral source, CLIC slot}. */
 static const struct {
@@ -108,13 +105,14 @@ void ulmk_board_irq_disconnect(uint8_t srpn)
 bool ulmk_board_irq_claim(uint32_t irq)
 {
 	if (irq == ULMK_BOARD_CLIC_IRQ_TICK) {
-		ulmk_kern_timer_tick();
+		ulmk_board_tick_ack();
+		ulmk_kern_timer_pulse();
 		return true;
 	}
 #if ULMK_CONFIG_ENABLE_SMP && ULMK_ARCH_HAVE_BOARD_IPI
 	if (irq == ULMK_BOARD_CLIC_IRQ_IPI) {
 		ulmk_arch_ipi_clear_self();
-		ulmk_kern_ipi_from_isr();
+		ulmk_kern_ipi_resched();
 		return true;
 	}
 #endif
