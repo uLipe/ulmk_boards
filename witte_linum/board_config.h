@@ -29,6 +29,14 @@
  */
 #define ULMK_BOARD_ENABLE_CPU_CACHE	1
 
+/*
+ * With that cache in front of AXI flash, a syscall of a few hundred cycles
+ * routinely picks up one or two line refills, which is far more than the
+ * 10% relative envelope silicon_wcet applies by default.  Two refills at
+ * this clock is ~200 ns.  The percentage still governs the long syscalls.
+ */
+#define ULMK_BOARD_WCET_FLOOR_TICKS	96u
+
 #ifndef ULMK_ARCH_IDLE_IS_WFI
 #define ULMK_ARCH_IDLE_IS_WFI		1
 #endif
