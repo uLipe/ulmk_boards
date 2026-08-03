@@ -7,10 +7,12 @@ Board support package (BSP) for the
 `-DULMK_CHIP_DIR`.
 
 **Drivers (current):** self-contained client/server modules under `drivers/`
-(gpio, asclin, i2c, adc, can, pwm) using Infineon iLLD SFR/inlines as HAL.
-Board policy is only `board_console`, `board_leds`, `board_timer`,
-`board_services`.  Console is ASCLIN0 userspace (USB VCOM).  **No kernel printk**
-— `ulmk_printk_char_out` is a no-op; use `board_console_puts()` from apps.
+(gpio, asclin, i2c, adc, can, pwm) using Infineon iLLD SFR/inlines as HAL,
+plus **device-manager adapters** (`gpio_dm`, `adc_dm`, `can_dm`, `pwm_dm`)
+registered through `board_devices`.  Board policy is `board_console`,
+`board_leds`, `board_timer`, `board_services`.  Console is ASCLIN0 userspace
+(USB VCOM).  **No kernel printk** — `ulmk_printk_char_out` is a no-op; use
+`board_console_puts()` from apps.
 
 This BSP does **not** ship a `root_thread`.  Your application (or an ulmk
 component such as `hello_world`) provides `ulmk_root_thread()` and calls
@@ -134,12 +136,14 @@ tc275_lite/
   board.cmake / board_config.h / memory.ld / bmhd.*
   board_init.c / board_services.*
   board_console.* / board_timer.*
-  components/              board-local demos (board_blinky, board_adc_pot, …)
+  components/              board-local demos (board_blinky, *_dm, smp_*, …)
+  board_devices.*          register DM paths (/dev/gpio0, /dev/adc0, …)
   deps/                    Ifx_Cfg.h, illd.cmake, illd_tc2x/ (IFASLL)
   drivers/asclin/          ASCLIN UART (polled 8N1)
   drivers/adc/             VADC queued conversion (AN0 pot = G0CH0)
+  drivers/*_dm/            ulmk_device_manager adapters over legacy clients
   openocd/                 TAS configs + aurix-openocd patch series (upstream PR)
-  scripts/                 flash.sh, hil-boot-check.sh, hil-step-test.sh, …
+  scripts/                 flash.sh, hil-boot-check.sh, hil-silicon-*.sh, …
 ```
 
 ## Build (ulmk dev container)
@@ -276,6 +280,21 @@ On press, toggles LED1/LED2 (one on, the other off).
 `gpio_subscribe()` is separate: pins with an **SCU ERU** REQ (e.g. **P00.4** /
 REQ7) get edge IRQs from the GPIO IRQ thread (`SRC_SCUERU0` / EIFR).
 
+### Device-manager demos (`*_dm`)
+
+Same kit behaviour as the legacy demos, but clients talk
+`ulmk_open` / `ulmk_read` / `ulmk_write` / `ulmk_ioctl` on `/dev/*` after
+`board_devices_register_*` from the root thread:
+
+| Component | Path(s) |
+|-----------|---------|
+| `board_adc_pot_dm` | `/dev/adc0` |
+| `board_pwm_led_dm` | `/dev/pwm0` |
+| `board_can_loopback_dm` | `/dev/can0` |
+| `gpio_led_notify_dm` | `/dev/gpio0` |
+
+Class contracts come from `ulmk_apps/ulmk_device_classes`.
+
 ## Hardware notes
 
 - **Crystal:** 20 MHz → **200 MHz** CPU (`ULMK_BOARD_FCPU_HZ`); STM @ **100 MHz** (`ULMK_BOARD_FSTM_HZ`).
@@ -304,11 +323,14 @@ REQ7) get edge IRQs from the GPIO IRQ thread (`SRC_SCUERU0` / EIFR).
 | `silicon_irq_stress` | `scripts/hil-silicon-irq-stress.sh` |
 | `silicon_stress` | `scripts/hil-silicon-stress.sh` |
 | `silicon_wcet` | `scripts/hil-silicon-wcet.sh` |
+| `silicon_device_manager` | `scripts/hil-silicon-device-manager.sh` |
 | `silicon_smp_smoke` | `scripts/hil-silicon-smp-smoke.sh` (needs `--enable-smp`) |
 | `board_blinky` | `scripts/hil-board-blinky.sh` |
 
-Order: baseline → e2e → unit → edge/fault suites → lifecycle/IRQ suites → stress → wcet → smp_smoke.  Blinky is the BSP demo (not a cert gate).
-Expect `SILICON_*: PASS` in the RAM log; blinky smoke looks for `led1=`.
+Order: baseline → e2e → unit → edge/fault suites → lifecycle/IRQ suites →
+stress → wcet → device_manager → smp_smoke.  Blinky is the BSP demo (not a
+cert gate).  Expect `SILICON_*: PASS` in the RAM log; blinky smoke looks for
+`led1=`.
 
 SMP HIL (CPU0+CPU1+CPU2):
 

@@ -94,11 +94,14 @@ $CAP $ELF 'display touch running' 15  # banner+uptime+XY; touch for beep
 | `board_pwm_buzzer` | buzzer PWM banner |
 | `board_can_loopback` | `tx id=` / loopback |
 | `board_adc_scan` | channel scan lines |
-| `display_hello` | `display hello running` + panel banner |
-| `display_touch` | `display touch running`; panel XY + buzzer beep |
-| `lvgl_benchmark` | `lvgl benchmark`; LVGL 9.5 DIRECT dual-FB + sysmon (FPS/mem; CPU% stub) |
+| `display_hello` | (apps) `display hello running` + panel banner via `/dev/disp0` |
+| `display_touch` | (apps) `display touch running`; panel XY + buzzer beep via DM |
+| `lvgl_benchmark` | (apps) `lvgl benchmark`; LVGL 9.5 DIRECT dual-FB + sysmon |
 | `board_qspi_jedec` | `QSPI JEDEC:` + `QSPI: PASS` (or `TC OK` if ID unexpected) |
 | `board_touch_xy` | `touch probe OK` / `touch waiting` / `touch x=` |
+
+Board DM adapters: `display_dm`, `touch_dm` (`board_devices` → `/dev/disp0`,
+`/dev/input0`).  LVGL submodule: `ulmk_apps/deps/lvgl`.
 
 Display banner (panel): `ulmk Microkernel` / `Hello Linum!` / `uptime: NNNNNN s`.
 
@@ -106,4 +109,4 @@ Display banner (panel): `ulmk Microkernel` / `Hello Linum!` / `uptime: NNNNNN s`
 
 Same `board_services` / console / timer contract as other kits. Silicon UP
 cases from `ulmk_apps/silicon/` run via the matching `scripts/hil-silicon-*.sh`
-(RTT). SMP is not supported on this board.
+(RTT), including `silicon_device_manager`. SMP is not supported on this board.
