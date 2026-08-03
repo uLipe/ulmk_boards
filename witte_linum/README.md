@@ -94,9 +94,9 @@ $CAP $ELF 'display touch running' 15  # banner+uptime+XY; touch for beep
 | `board_pwm_buzzer` | buzzer PWM banner |
 | `board_can_loopback` | `tx id=` / loopback |
 | `board_adc_scan` | channel scan lines |
-| `board_display_hello` | `display hello running` + panel banner |
-| `board_display_touch` | `display touch running`; panel XY + buzzer beep |
-| `board_lvgl_benchmark` | `lvgl benchmark`; LVGL 9.5 DIRECT dual-FB + sysmon (FPS/mem; CPU% stub) |
+| `display_hello` | `display hello running` + panel banner |
+| `display_touch` | `display touch running`; panel XY + buzzer beep |
+| `lvgl_benchmark` | `lvgl benchmark`; LVGL 9.5 DIRECT dual-FB + sysmon (FPS/mem; CPU% stub) |
 | `board_qspi_jedec` | `QSPI JEDEC:` + `QSPI: PASS` (or `TC OK` if ID unexpected) |
 | `board_touch_xy` | `touch probe OK` / `touch waiting` / `touch x=` |
 

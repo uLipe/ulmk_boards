@@ -36,7 +36,7 @@ Prebuilt bootloader + partition table: `scripts/prebuilt/`
 (bootloader flash size 16 MB; factory app partition 3 MiB — see
 `scripts/partitions.csv`).
 
-LVGL for `board_lvgl_benchmark` is a board-local submodule:
+LVGL for `lvgl_benchmark` is a board-local submodule:
 
 ```bash
 git submodule update --init esp32p4_ev_function/deps/lvgl
@@ -94,14 +94,14 @@ $CAP $ELF 'GDMA_AXI: PASS' 15
 
 # LVGL v9.5 DIRECT dual-FB benchmark (splash + scenes; needs PSRAM)
 python3 tools/dev.py build --board $BOARD --clean --no-components \
-  --component board_lvgl_benchmark
+  --component lvgl_benchmark
 $CAP $ELF 'lvgl bench DONE scenes=' 220
 ```
 
 Components: `hello_world`, `board_blinky`, `board_pwm_backlight`, `board_adc_scan`,
-`board_spi_loopback`, `board_can_loopback`, `board_display_hello`,
-`board_display_touch`, `board_pmp_neg`, `board_gdma_axi_memcpy`,
-`board_lvgl_benchmark`, `smp_affinity_console`, `smp_display_touch`,
+`board_spi_loopback`, `board_can_loopback`, `display_hello`,
+`display_touch`, `board_pmp_neg`, `board_gdma_axi_memcpy`,
+`lvgl_benchmark`, `smp_affinity_console`, `smp_display_touch`,
 `smp_spi_can`.
 
 ## Chip layer (Layer 3)
@@ -160,7 +160,7 @@ python3 tools/dev.py build --board ../ulmk_boards/esp32p4_ev_function \
 | `gdma_axi` | AXI-PDMA: memcpy plus independent GPSPI2/3 RX/TX pairs |
 | `can` | TWAI0 self-test loopback (`tx id=` + `rx id=`) |
 | `display` / `dsi` | EK79007 → `dsi_fb_start`; attach rearm always acks; `display_present` waits next frame |
-| `board_lvgl_benchmark` | LVGL 9.5 DIRECT dual-FB in PSRAM; SW render `-Ofast`; GT911 indev |
+| `lvgl_benchmark` | LVGL 9.5 DIRECT dual-FB in PSRAM; SW render `-Ofast`; GT911 indev |
 
 ## Notes
 

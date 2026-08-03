@@ -47,7 +47,7 @@ STM32H753ZI on a board with SDRAM and a parallel RGB panel.  Single core.
 | QSPI | W25Q128 NOR in indirect mode |
 | Console | SEGGER RTT channel 0 over J-Link; USART1 remains available as a driver |
 | SMP | Not applicable (single core) |
-| Demos | `board_blinky`, `board_adc_scan`, `board_pwm_backlight`, `board_pwm_buzzer`, `board_can_loopback`, `board_sdram_smoke`, `board_qspi_jedec`, `board_touch_xy`, `board_display_hello`, `board_display_touch`, `board_lvgl_benchmark` |
+| Demos | `board_blinky`, `board_adc_scan`, `board_pwm_backlight`, `board_pwm_buzzer`, `board_can_loopback`, `board_sdram_smoke`, `board_qspi_jedec`, `board_touch_xy`, `display_hello`, `display_touch`, `lvgl_benchmark` |
 | Silicon cert | 14 `hil-silicon-*` suites over RTT capture |
 | Flash / debug | J-Link (`scripts/flash.sh`, `scripts/hil-rtt-capture.sh`) |
 
@@ -67,7 +67,7 @@ the least finished one — read the WIP note in its README before relying on it.
 | Console | UART0 written straight to the FIFO (the ROM printf is not reentrant) |
 | SMP | Not supported |
 | Isolation | **None yet.** PMP runs with `PRESERVE_BOOT`, which keeps an unlocked RWX window the bootloader left over the whole internal SRAM |
-| Demos | `board_blinky`, `board_adc_scan`, `board_pwm_backlight`, `board_can_loopback`, `board_spi_loopback`, `board_dma_memcpy`, `board_display_hello`, `board_display_touch`, `board_pmp_neg`, `board_lvgl_benchmark` |
+| Demos | `board_blinky`, `board_adc_scan`, `board_pwm_backlight`, `board_can_loopback`, `board_spi_loopback`, `board_dma_memcpy`, `display_hello`, `display_touch`, `board_pmp_neg`, `lvgl_benchmark` |
 | Silicon cert | Not ported — serial capture only |
 | Toolchain | `riscv32-esp-elf` from ESP-IDF on the host, not in the dev container (`ESP_IDF_PATH`) |
 | Flash / debug | `esptool` (`scripts/flash.sh`), built-in USB Serial/JTAG via `scripts/openocd-p4.sh` |
