@@ -179,6 +179,7 @@ static void touch_server(void *arg)
 	ulmk_tid_t sender;
 	uint16_t x;
 	uint16_t y;
+	int rc;
 
 	(void)arg;
 	if (touch_hw_init() != ULMK_OK)
@@ -191,23 +192,36 @@ static void touch_server(void *arg)
 		reply.words[0] = (uint32_t)ULMK_EINVAL;
 		reply.words[1] = 0u;
 		reply.words[2] = 0u;
-		if (msg.label == TOUCH_MSG_WAIT) {
+		switch (msg.label) {
+		case TOUCH_MSG_WAIT:
 			reply.words[0] = (uint32_t)touch_do_wait(msg.words[0]);
-		} else if (msg.label == TOUCH_MSG_READ_XY) {
-			reply.words[0] = (uint32_t)touch_do_read_xy(&x, &y);
-			if ((int)(int32_t)reply.words[0] == ULMK_OK) {
+			break;
+		case TOUCH_MSG_READ_XY:
+			rc = touch_do_read_xy(&x, &y);
+			reply.words[0] = (uint32_t)rc;
+			if (rc == ULMK_OK) {
 				reply.words[1] = x;
 				reply.words[2] = y;
 			}
-		} else if (msg.label == TOUCH_MSG_POLL) {
-			reply.words[0] = (uint32_t)touch_do_poll(&x, &y);
-			if ((int)(int32_t)reply.words[0] == 1) {
+			break;
+		case TOUCH_MSG_POLL:
+			rc = touch_do_poll(&x, &y);
+			reply.words[0] = (uint32_t)rc;
+			if (rc == 1) {
 				reply.words[1] = x;
 				reply.words[2] = y;
 			}
+			break;
+		default:
+			break;
 		}
 		ulmk_ep_reply(sender, &reply);
 	}
+}
+
+ulmk_ep_t touch_ep(void)
+{
+	return g_touch_ep;
 }
 
 ulmk_tid_t touch_init(uint8_t n)

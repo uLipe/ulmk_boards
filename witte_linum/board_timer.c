@@ -31,6 +31,16 @@ uint32_t board_timer_now_ticks(void)
 	return g_tim[tim_w(TIM_CNT)];
 }
 
+uint32_t board_timer_now_ms(void)
+{
+	uint64_t ticks;
+
+	if (!g_tim)
+		return 0u;
+	ticks = (uint64_t)g_tim[tim_w(TIM_CNT)];
+	return (uint32_t)(ticks / (uint64_t)(ULMK_BOARD_FSTM_HZ / 1000u));
+}
+
 uint32_t board_timer_ticks_to_ns(uint32_t dt)
 {
 	uint64_t ns;

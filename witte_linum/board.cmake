@@ -45,10 +45,12 @@ set(ULMK_BOARD_SOURCES
 	drivers/dma/src/client.c
 	drivers/display/src/server.c
 	drivers/display/src/client.c
+	drivers/display_dm/src/server.c
 	drivers/i2c/src/server.c
 	drivers/i2c/src/client.c
 	drivers/touch/src/server.c
 	drivers/touch/src/client.c
+	drivers/touch_dm/src/server.c
 	drivers/qspi/src/server.c
 	drivers/qspi/src/client.c
 	${ULMK_BOARD_STM32_SOURCES}
@@ -72,11 +74,28 @@ set(ULMK_BOARD_INCLUDES
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/dma/src"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/display/include"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/display/src"
+	"${CMAKE_CURRENT_LIST_DIR}/drivers/display_dm/include"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/i2c/include"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/i2c/src"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/touch/include"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/touch/src"
+	"${CMAKE_CURRENT_LIST_DIR}/drivers/touch_dm/include"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/qspi/include"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/qspi/src"
 	"${CMAKE_CURRENT_LIST_DIR}"
 )
+
+if(EXISTS "${CMAKE_SOURCE_DIR}/components/ulmk_device_manager/include/ulmk_device.h")
+	set(ULMK_COMP_ulmk_device_manager_ENABLED ON CACHE BOOL
+		"Enable device manager (required by board_devices.c)" FORCE)
+	list(APPEND ULMK_BOARD_INCLUDES
+		"${CMAKE_SOURCE_DIR}/components/ulmk_device_manager/include")
+	list(APPEND ULMK_BOARD_SOURCES board_devices.c)
+	set(_ULMK_BOARD_HAS_DEV_MGR ON)
+endif()
+
+# App-owned device class contracts — policy in ulmk_apps, not the kernel tree.
+if(EXISTS "${CMAKE_SOURCE_DIR}/../ulmk_apps/ulmk_device_classes/include")
+	list(APPEND ULMK_BOARD_INCLUDES
+		"${CMAKE_SOURCE_DIR}/../ulmk_apps/ulmk_device_classes/include")
+endif()

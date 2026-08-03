@@ -320,6 +320,11 @@ uint32_t dsi_fb_frames(void)
 	return g_rearms;
 }
 
+uint32_t dsi_fb_present_timeouts(void)
+{
+	return g_present_timeouts;
+}
+
 void dsi_fb_diag(uint32_t window_ms)
 {
 	uint32_t before;

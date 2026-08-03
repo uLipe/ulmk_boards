@@ -2,6 +2,9 @@
 /*
  * Display — MIPI-DSI EK79007. Dual PSRAM FB; DPI DMA starts on first flip
  * after the client has painted (avoids PSRAM writeback vs scanout underrun).
+ *
+ * Legacy display_* labels (DISPLAY_MSG_*). Device-manager clients use
+ * drivers/display_dm instead.
  */
 #include <stdint.h>
 #include <stddef.h>
@@ -23,6 +26,7 @@
 static uint16_t g_soft0[SOFT_FB_PIXELS];
 static uint16_t g_soft1[SOFT_FB_PIXELS];
 static uint16_t *g_fb[2];
+static uint16_t *g_fb_nc[2];
 static unsigned g_front;
 static int g_ready;
 static int g_psram_fb;
@@ -46,6 +50,10 @@ static uint16_t *back_buffer(void)
 	return g_ready ? g_fb[g_front ^ 1u] : NULL;
 }
 
+/*
+ * Hot path — pointer compare only.  LVGL paints via display_fb() (cached)
+ * and present() must not call board_psram_nc() every frame.
+ */
 static int do_present(void *fb)
 {
 	unsigned idx;
@@ -56,6 +64,10 @@ static int do_present(void *fb)
 		idx = 0u;
 	else if (fb == (void *)g_fb[1])
 		idx = 1u;
+	else if (fb == (void *)g_fb_nc[0])
+		idx = 0u;
+	else if (fb == (void *)g_fb_nc[1])
+		idx = 1u;
 	else
 		return ULMK_EINVAL;
 
@@ -64,8 +76,10 @@ static int do_present(void *fb)
 	if (!g_psram_fb)
 		return ULMK_OK;
 
+	fb = g_fb[idx];
 	if (!g_dpi_on) {
-		if (dsi_fb_start(fb, (uint32_t)ULMK_BOARD_DISPLAY_FB_BYTES) != 0) {
+		if (dsi_fb_start(fb,
+				 (uint32_t)ULMK_BOARD_DISPLAY_FB_BYTES) != 0) {
 			board_console_printf("ulmk: dsi fb start fail\n");
 			return ULMK_EINVAL;
 		}
@@ -97,20 +111,25 @@ static void display_server(void *arg)
 		reply.label = 0u;
 		reply.words[0] = (uint32_t)ULMK_EINVAL;
 		reply.words[1] = 0u;
+		reply.words[2] = 0u;
+		reply.words[3] = 0u;
+		reply.words[4] = 0u;
+		reply.words[5] = 0u;
+
 		switch (msg.label) {
+		case DISPLAY_MSG_PRESENT:
+			reply.words[0] = (uint32_t)do_present(
+				(void *)(uintptr_t)msg.words[0]);
+			break;
+		case DISPLAY_MSG_FLIP:
+			reply.words[0] = (uint32_t)do_flip();
+			break;
 		case DISPLAY_MSG_WRITE:
 			if (g_ready) {
 				reply.words[0] = (uint32_t)ULMK_OK;
 				reply.words[1] = (uint32_t)(uintptr_t)
 					back_buffer();
 			}
-			break;
-		case DISPLAY_MSG_FLIP:
-			reply.words[0] = (uint32_t)do_flip();
-			break;
-		case DISPLAY_MSG_PRESENT:
-			reply.words[0] = (uint32_t)do_present(
-				(void *)(uintptr_t)msg.words[0]);
 			break;
 		case DISPLAY_MSG_ON:
 			if (g_ready) {
@@ -125,23 +144,31 @@ static void display_server(void *arg)
 					g_fb[msg.words[0]];
 			}
 			break;
+		case DISPLAY_MSG_INFO:
+			if (g_ready) {
+				reply.words[0] = (uint32_t)ULMK_OK;
+				reply.words[1] = g_fb_w;
+				reply.words[2] = g_fb_h;
+				reply.words[3] = (uint32_t)g_psram_fb;
+				reply.words[4] = (uint32_t)g_fb_w * 2u;
+				reply.words[5] = 2u;
+			}
+			break;
 		case DISPLAY_MSG_FB_NC:
 			reply.words[0] = (uint32_t)ULMK_OK;
 			reply.words[1] = (uint32_t)(uintptr_t)
 				fb_nc((uint16_t *)(uintptr_t)msg.words[0]);
-			break;
-		case DISPLAY_MSG_INFO:
-			reply.words[0] = (uint32_t)(g_ready ? ULMK_OK :
-						    ULMK_EINVAL);
-			reply.words[1] = g_fb_w;
-			reply.words[2] = g_fb_h;
-			reply.words[3] = (uint32_t)g_psram_fb;
 			break;
 		default:
 			break;
 		}
 		ulmk_ep_reply(sender, &reply);
 	}
+}
+
+ulmk_ep_t display_ep(void)
+{
+	return g_display_eps[0];
 }
 
 ulmk_tid_t display_init(uint8_t mod)
@@ -151,6 +178,7 @@ ulmk_tid_t display_init(uint8_t mod)
 	uint32_t i;
 	void *psram;
 	uint32_t need;
+
 	(void)mod;
 	if (dsi_init() != 0)
 		return ULMK_TID_INVALID;
@@ -173,6 +201,9 @@ ulmk_tid_t display_init(uint8_t mod)
 		g_fb_pixels = SOFT_FB_PIXELS;
 		g_psram_fb = 0;
 	}
+
+	g_fb_nc[0] = fb_nc(g_fb[0]);
+	g_fb_nc[1] = fb_nc(g_fb[1]);
 
 	for (i = 0u; i < g_fb_pixels; i++) {
 		g_fb[0][i] = 0u;

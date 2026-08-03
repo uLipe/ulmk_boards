@@ -8,6 +8,7 @@
  */
 #include <stdint.h>
 #include "board_console.h"
+#include "board_cpu_clk.h"
 
 void board_pmp_allow_u_console(void);
 
@@ -80,4 +81,10 @@ void ulmk_board_init(void)
 	wr32(HP_SYS_CORE_ERR_RESP_DIS, 0u);
 	board_pmp_allow_u_console();
 	board_console_early_puts("ulmk: board_init\n");
+	/*
+	 * Raise CPLL→400 MHz before anything CPU-bound.  Must not depend on
+	 * .bss/.data — ulmk_board_init runs before they exist (see
+	 * board_cpu_clk_set_400m).
+	 */
+	(void)board_cpu_clk_set_400m();
 }

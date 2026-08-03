@@ -248,26 +248,16 @@ static void ch_hw_stop(uint8_t ch)
 	tgc_trigger(tgc);
 }
 
-static void pwm_server(void *arg)
+static int pwm_map_mmio(void)
 {
-	ulmk_msg_t msg;
-	ulmk_msg_t reply;
-	ulmk_tid_t sender;
-	uint8_t ch;
-	uint8_t tom_ch;
-	uint8_t tout_n;
-	uint8_t tout_sel;
 	void *mapped;
-
-	(void)arg;
 
 	mapped = ulmk_mem_map((void *)(uintptr_t)ULMK_BOARD_GTM_TOM0_BASE,
 			      PWM_TOM_MAP_SIZE,
 			      ULMK_PERM_READ | ULMK_PERM_WRITE,
 			      ULMK_MMAP_PERIPH);
 	if (!mapped)
-		for (;;)
-			;
+		return -1;
 	g_tom = (Ifx_GTM_TOM *)mapped;
 
 	mapped = ulmk_mem_map((void *)(uintptr_t)ULMK_BOARD_GTM_CMU_BASE,
@@ -275,8 +265,7 @@ static void pwm_server(void *arg)
 			      ULMK_PERM_READ | ULMK_PERM_WRITE,
 			      ULMK_MMAP_PERIPH);
 	if (!mapped)
-		for (;;)
-			;
+		return -1;
 	g_cmu_clk_en = (volatile uint32_t *)mapped;		/* +0x00 CLK_EN */
 	g_cmu_gclk_num = g_cmu_clk_en + 1;			/* +0x04 */
 	g_cmu_gclk_den = g_cmu_clk_en + 2;			/* +0x08 */
@@ -286,15 +275,42 @@ static void pwm_server(void *arg)
 			      ULMK_PERM_READ | ULMK_PERM_WRITE,
 			      ULMK_MMAP_PERIPH);
 	if (!mapped)
-		for (;;)
-			;
+		return -1;
 	g_toutsel = (volatile uint32_t *)mapped;
+	return 0;
+}
 
+static void pwm_server(void *arg)
+{
+	ulmk_msg_t msg;
+	ulmk_msg_t reply;
+	ulmk_tid_t sender;
+	uint8_t ch;
+	uint8_t tom_ch;
+	uint8_t tout_n;
+	uint8_t tout_sel;
+	int mapped;
+
+	(void)arg;
+
+	/*
+	 * Recv before MMIO map.  Mapping first + spinning on failure starves
+	 * same-priority peers (e.g. pwm_dm) and deadlocks nested DM open/ioctl.
+	 */
+	mapped = 0;
 	for (;;) {
 		if (ulmk_ep_recv(g_pwm_ep, &msg, &sender) != ULMK_OK)
 			continue;
 		reply.label = 0u;
 		reply.words[0] = (uint32_t)ULMK_OK;
+		if (!mapped) {
+			if (pwm_map_mmio() != 0) {
+				reply.words[0] = (uint32_t)ULMK_ENOMEM;
+				ulmk_ep_reply(sender, &reply);
+				continue;
+			}
+			mapped = 1;
+		}
 		ch = (uint8_t)msg.words[0];
 		if (ch >= PWM_MAX_CH) {
 			reply.words[0] = (uint32_t)ULMK_EINVAL;

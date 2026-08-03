@@ -6,6 +6,7 @@
  */
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 #include <ulmk/microkernel.h>
 #include "display.h"
 #include "display_internal.h"
@@ -16,6 +17,7 @@ static int display_call(uint32_t label, uint32_t a0, ulmk_msg_t *msg)
 
 	if (g_display_eps[0] == ULMK_EP_INVALID)
 		return ULMK_EINVAL;
+	memset(msg, 0, sizeof(*msg));
 	msg->label = label;
 	msg->words[0] = a0;
 	rc = ulmk_ep_call(g_display_eps[0], msg);

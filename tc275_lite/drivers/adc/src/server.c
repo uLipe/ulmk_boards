@@ -96,20 +96,28 @@ static void adc_server(void *arg)
 	int rc;
 
 	(void)arg;
-	mapped = ulmk_mem_map((void *)&MODULE_VADC, ADC_MAP_SIZE,
-			      ULMK_PERM_READ | ULMK_PERM_WRITE,
-			      ULMK_MMAP_PERIPH);
-	if (!mapped)
-		for (;;)
-			;
-	vadc = (Ifx_VADC *)mapped;
-
+	/*
+	 * Recv before MMIO map — same rationale as pwm_server (DM peer
+	 * starvation if map fails and spins).
+	 */
+	mapped = NULL;
 	for (;;) {
 		if (ulmk_ep_recv(g_adc_ep, &msg, &sender) != ULMK_OK)
 			continue;
 		reply.label = 0u;
 		reply.words[0] = (uint32_t)ULMK_OK;
 		reply.words[1] = 0u;
+		if (!mapped) {
+			mapped = ulmk_mem_map((void *)&MODULE_VADC, ADC_MAP_SIZE,
+					      ULMK_PERM_READ | ULMK_PERM_WRITE,
+					      ULMK_MMAP_PERIPH);
+			if (!mapped) {
+				reply.words[0] = (uint32_t)ULMK_ENOMEM;
+				ulmk_ep_reply(sender, &reply);
+				continue;
+			}
+			vadc = (Ifx_VADC *)mapped;
+		}
 
 		if (msg.label == ADC_MSG_CONFIG) {
 			group = (uint8_t)msg.words[0];

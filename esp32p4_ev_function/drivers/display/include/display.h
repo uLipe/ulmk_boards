@@ -13,6 +13,7 @@
 #define DISPLAY_FB_MAP_SIZE	ULMK_BOARD_DISPLAY_FB_MAP_SIZE
 
 ulmk_tid_t display_init(uint8_t mod);
+ulmk_ep_t display_ep(void);
 uint16_t *display_write(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
 int display_flip(void);
 int display_on(int on);

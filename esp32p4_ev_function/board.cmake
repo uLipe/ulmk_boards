@@ -85,10 +85,12 @@ set(ULMK_BOARD_INCLUDES
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/gdma_axi/src"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/display/include"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/display/src"
+	"${CMAKE_CURRENT_LIST_DIR}/drivers/display_dm/include"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/dsi/include"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/dsi/src"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/touch/include"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/touch/src"
+	"${CMAKE_CURRENT_LIST_DIR}/drivers/touch_dm/include"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/spi/include"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/spi/src"
 	"${CMAKE_CURRENT_LIST_DIR}/drivers/can/include"
@@ -102,6 +104,20 @@ set(ULMK_BOARD_INCLUDES
 	"${ESP_IDF_PATH}/components/esp_rom/esp32p4/include"
 	"${ESP_IDF_PATH}/components/esp_common/include"
 )
+
+if(EXISTS "${CMAKE_SOURCE_DIR}/components/ulmk_device_manager/include/ulmk_device.h")
+	set(ULMK_COMP_ulmk_device_manager_ENABLED ON CACHE BOOL
+		"Enable device manager (required by board_devices.c)" FORCE)
+	list(APPEND ULMK_BOARD_INCLUDES
+		"${CMAKE_SOURCE_DIR}/components/ulmk_device_manager/include")
+	set(_ULMK_BOARD_HAS_DEV_MGR ON)
+endif()
+
+# App-owned device class contracts — policy in ulmk_apps, not the kernel tree.
+if(EXISTS "${CMAKE_SOURCE_DIR}/../ulmk_apps/ulmk_device_classes/include")
+	list(APPEND ULMK_BOARD_INCLUDES
+		"${CMAKE_SOURCE_DIR}/../ulmk_apps/ulmk_device_classes/include")
+endif()
 
 set(ULMK_BOARD_SOURCES
 	board_init.c
@@ -145,13 +161,19 @@ set(ULMK_BOARD_SOURCES
 	drivers/gdma_axi/src/client.c
 	drivers/display/src/server.c
 	drivers/display/src/client.c
+	drivers/display_dm/src/server.c
 	drivers/touch/src/server.c
 	drivers/touch/src/client.c
+	drivers/touch_dm/src/server.c
 	drivers/spi/src/server.c
 	drivers/spi/src/client.c
 	drivers/can/src/server.c
 	drivers/can/src/client.c
 )
+
+if(_ULMK_BOARD_HAS_DEV_MGR)
+	list(APPEND ULMK_BOARD_SOURCES board_devices.c)
+endif()
 
 # ROM PROVIDE scripts (absolute INCLUDE written for generate_ld.py)
 set(_ULMK_IDF_ROM_LD "${ESP_IDF_PATH}/components/esp_rom/esp32p4/ld")

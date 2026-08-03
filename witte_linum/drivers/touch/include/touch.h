@@ -13,6 +13,7 @@
  * server thread so the root does not burn MPU regions.
  */
 ulmk_tid_t touch_init(uint8_t n);
+ulmk_ep_t touch_ep(void);
 int touch_wait(uint8_t n, uint32_t timeout_ms);
 int touch_read_xy(uint8_t n, uint16_t *x, uint16_t *y);
 /* Non-blocking: 1=pressed (+x/y), 0=released, <0=error. */

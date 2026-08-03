@@ -56,8 +56,6 @@
 
 extern void esp_rom_set_cpu_ticks_per_us(int ticks);
 
-static int g_cpu_400m;
-
 static inline void wr(uint32_t a, uint32_t v)
 {
 	*(volatile uint32_t *)(uintptr_t)a = v;
@@ -204,40 +202,6 @@ static int cpll_configure_400m(void)
 	return (rd(ANA_PLL_CTRL0) & CPLL_CAL_END) ? 0 : -1;
 }
 
-/*
- * A core that has a memory access in flight while CPU/MEM/APB rates move can
- * latch a corrupt cache line and later stall on it.  Park the peer core in the
- * PMU stall state across every switch, as ESP-IDF does.
- */
-#define PMU_CPU_SW_STALL	0x50115200u
-#define HP_SYS_CORESTALLED_ST	0x500E5064u
-#define PMU_STALL_CODE		0x86u
-#define PMU_RUN_CODE		0xFFu
-
-void board_cpu_peer_stall(uint32_t peer)
-{
-	uint32_t shift = (peer == 0u) ? 24u : 16u;
-	uint32_t bit = 1u << peer;
-	uint32_t guard = 0u;
-
-	wr(PMU_CPU_SW_STALL, (rd(PMU_CPU_SW_STALL) & ~(0xFFu << shift)) |
-			     (PMU_STALL_CODE << shift));
-	while ((rd(HP_SYS_CORESTALLED_ST) & bit) == 0u && guard < 100000u)
-		guard++;
-}
-
-void board_cpu_peer_unstall(uint32_t peer)
-{
-	uint32_t shift = (peer == 0u) ? 24u : 16u;
-	uint32_t bit = 1u << peer;
-	uint32_t guard = 0u;
-
-	wr(PMU_CPU_SW_STALL, (rd(PMU_CPU_SW_STALL) & ~(0xFFu << shift)) |
-			     (PMU_RUN_CODE << shift));
-	while ((rd(HP_SYS_CORESTALLED_ST) & bit) != 0u && guard < 100000u)
-		guard++;
-}
-
 static void cpu_to_cpll_400m(void)
 {
 	/*
@@ -260,17 +224,19 @@ static void cpu_to_cpll_400m(void)
 
 int board_cpu_clk_set_400m(void)
 {
-	if (g_cpu_400m)
-		return 0;
-
+	/*
+	 * Called from ulmk_board_init() before .data/.bss exist — do not
+	 * touch statics.  A BSS "already done" flag here skipped the raise
+	 * whenever uninitialised memory looked non-zero and left the core
+	 * at the bootloader ~90 MHz (Empty-screen stuck ~17 FPS).
+	 */
 	cpll_enable();
 	cpu_to_xtal();
 	if (cpll_configure_400m() != 0) {
-		board_console_printf("ulmk: cpll 400m cal timeout\n");
+		board_console_early_puts("ulmk: cpll 400m cal timeout\n");
 		return -1;
 	}
 	cpu_to_cpll_400m();
-	g_cpu_400m = 1;
-	board_console_printf("ulmk: cpu 400m ok\n");
+	board_console_early_puts("ulmk: cpu 400m ok\n");
 	return 0;
 }

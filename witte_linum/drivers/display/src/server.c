@@ -305,9 +305,7 @@ static void display_server(void *arg)
 
 		switch (msg.label) {
 		case DISPLAY_MSG_WRITE:
-			if (msg.words[0] == 0u && msg.words[1] == 0u &&
-			    msg.words[2] == DISPLAY_W &&
-			    msg.words[3] == DISPLAY_H && g_ltdc_ready) {
+			if (g_ltdc_ready) {
 				reply.words[0] = (uint32_t)ULMK_OK;
 				reply.words[1] = fb_phys(g_back);
 			}
@@ -315,21 +313,26 @@ static void display_server(void *arg)
 		case DISPLAY_MSG_FLIP:
 			reply.words[0] = (uint32_t)display_do_flip();
 			break;
-		case DISPLAY_MSG_PRESENT:
-			reply.words[0] =
-				(uint32_t)display_do_present(msg.words[1]);
-			break;
 		case DISPLAY_MSG_ON:
 			disp_on_gpio(msg.words[0] != 0u);
 			if (msg.words[0] != 0u)
 				(void)ltdc_hw_init();
 			reply.words[0] = (uint32_t)ULMK_OK;
 			break;
+		case DISPLAY_MSG_PRESENT:
+			reply.words[0] =
+				(uint32_t)display_do_present(msg.words[1]);
+			break;
 		default:
 			break;
 		}
 		ulmk_ep_reply(sender, &reply);
 	}
+}
+
+ulmk_ep_t display_ep(void)
+{
+	return g_display_ep;
 }
 
 ulmk_tid_t display_init(uint8_t mod)

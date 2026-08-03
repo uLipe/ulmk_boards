@@ -5,6 +5,7 @@
 #include <touch.h>
 #include "board_console.h"
 #include "board_services.h"
+#include "board_devices.h"
 #include "board_config.h"
 
 void ulmk_root_thread(const ulmk_boot_info_t *info)
@@ -16,12 +17,8 @@ void ulmk_root_thread(const ulmk_boot_info_t *info)
 	board_services_init(info);
 	board_console_puts("\r\ntouch xy\r\n");
 
-	if (i2c_init(0u, ULMK_BOARD_I2C_BITRATE_HZ) == ULMK_TID_INVALID) {
-		board_console_puts("i2c init failed\r\n");
-		ulmk_thread_exit();
-	}
-	if (touch_init(0u) == ULMK_TID_INVALID) {
-		board_console_puts("touch init failed\r\n");
+	if (board_devices_register() != ULMK_OK) {
+		board_console_puts("board_devices_register failed\r\n");
 		ulmk_thread_exit();
 	}
 

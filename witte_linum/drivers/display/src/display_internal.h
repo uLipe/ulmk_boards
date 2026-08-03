@@ -5,10 +5,13 @@
 #include <ulmk/microkernel.h>
 #include <display.h>
 
-#define DISPLAY_MSG_WRITE	1u
-#define DISPLAY_MSG_FLIP	2u
-#define DISPLAY_MSG_ON		3u
-#define DISPLAY_MSG_PRESENT	4u
+/*
+ * Legacy client labels above the DM opcode band (0x01..0x07).
+ */
+#define DISPLAY_MSG_WRITE	0x10u /* -> phys of back buffer */
+#define DISPLAY_MSG_FLIP	0x11u
+#define DISPLAY_MSG_ON		0x12u
+#define DISPLAY_MSG_PRESENT	0x16u /* words[1]=phys */
 #define DISPLAY_NOTIF_VSYNC	0u
 
 extern ulmk_ep_t g_display_ep;

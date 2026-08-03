@@ -27,5 +27,6 @@ int dsi_fb_ready(void);
 void dsi_fb_diag(uint32_t window_ms);
 /* Free-running frame counter (60 Hz once streaming) — cheap timebase. */
 uint32_t dsi_fb_frames(void);
+uint32_t dsi_fb_present_timeouts(void);
 
 #endif /* DSI_DRV_H */

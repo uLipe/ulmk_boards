@@ -21,6 +21,7 @@ static void touch_server(void *arg)
 	ulmk_msg_t msg, reply;
 	ulmk_tid_t sender;
 	int x, y, pressed;
+	int rc;
 
 	(void)arg;
 	for (;;) {
@@ -28,15 +29,30 @@ static void touch_server(void *arg)
 			continue;
 		reply.label = 0u;
 		reply.words[0] = (uint32_t)ULMK_EINVAL;
-		if (msg.label == TOUCH_MSG_READ) {
-			reply.words[0] = (uint32_t)gt911_read(&x, &y,
-							      &pressed);
+		reply.words[1] = 0u;
+		reply.words[2] = 0u;
+		reply.words[3] = 0u;
+		reply.words[4] = 0u;
+		reply.words[5] = 0u;
+
+		switch (msg.label) {
+		case TOUCH_MSG_READ:
+			rc = gt911_read(&x, &y, &pressed);
+			reply.words[0] = (uint32_t)rc;
 			reply.words[1] = (uint32_t)x;
 			reply.words[2] = (uint32_t)y;
 			reply.words[3] = (uint32_t)pressed;
+			break;
+		default:
+			break;
 		}
 		ulmk_ep_reply(sender, &reply);
 	}
+}
+
+ulmk_ep_t touch_ep(void)
+{
+	return g_touch_eps[0];
 }
 
 ulmk_tid_t touch_init(uint8_t n)
@@ -94,7 +110,6 @@ static int gt911_read(int *x, int *y, int *pressed)
 	if (!g_have_gt911)
 		return ULMK_OK;
 
-	/* Point 1 status @ 0x814E, then track1 @ 0x814F (8 bytes). */
 	reg[0] = 0x81u;
 	reg[1] = 0x4Eu;
 	rc = i2c_write(g_gt911_addr, reg, 2u);
@@ -110,17 +125,12 @@ static int gt911_read(int *x, int *y, int *pressed)
 		*pressed = (n != 0u) ? 1 : 0;
 
 	if (n != 0u) {
-		/*
-		 * Track data after status: id, xl, xh, yl, yh, size...
-		 * GT911: 0x814F = track id, 0x8150/51 = X, 0x8152/53 = Y.
-		 */
 		if (x)
 			*x = (int)buf[2] | ((int)buf[3] << 8);
 		if (y)
 			*y = (int)buf[4] | ((int)buf[5] << 8);
 	}
 
-	/* Clear status: write 0 to 0x814E in one transaction. */
 	{
 		uint8_t clr[3] = { 0x81u, 0x4Eu, 0u };
 
