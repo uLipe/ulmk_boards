@@ -108,7 +108,7 @@ static ulmk_tid_t spawn_pinned(const char *name, void (*entry)(void *),
 	attr.priority   = 3u;
 	attr.stack_size = 3072u;
 	attr.privilege  = ULMK_PRIV_DRIVER;
-	attr.heap_size  = 0u;
+	attr.caps       = ULMK_CAP_INHERIT;
 	attr.cpu        = cpu;
 	return ulmk_thread_create(&attr);
 }
