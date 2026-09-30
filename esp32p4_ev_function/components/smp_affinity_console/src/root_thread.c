@@ -49,7 +49,7 @@ static ulmk_tid_t spawn_cpu(uint32_t cpu)
 	attr.priority   = 5u;
 	attr.stack_size = 2048u;
 	attr.privilege  = ULMK_PRIV_DRIVER;
-	attr.heap_size  = 0u;
+	attr.caps       = ULMK_CAP_INHERIT;
 	attr.cpu        = (uint8_t)cpu;
 	return ulmk_thread_create(&attr);
 }
