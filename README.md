@@ -4,6 +4,31 @@ Out-of-tree board support packages (BSPs) for [ulmk](../ulmk).  Each
 subdirectory is a self-contained chip input (`ULMK_CHIP_DIR`) with `memory.ld`,
 `board.cmake`, `board_config.h`, and board service sources.
 
+## Philosophy
+
+A BSP here is not a library linked into the application: it is a set of
+processes.  Almost all of a board runs in userspace, one server thread per
+controller, and is reached only over IPC.
+
+![BSP architecture: board threads in userspace, a thin board layer in the kernel](docs/diagrams/bsp_architecture.png)
+
+- **Kernel side, kept minimal.**  Only `ulmk_board_init()` (clocks and memory,
+  before `.data`/`.bss`), `ulmk_printk_char_out()`, the tick/IPI glue and the
+  optional IRQ-routing and cache hooks run privileged.
+- **Driver servers own the hardware.**  `drivers/<name>/src/server.c` maps its
+  registers through a kernel-granted MMIO window and waits on its interrupt as
+  a notification.  It never runs on a caller's thread.
+- **Clients only marshal messages.**  `client.c` turns each call into an IPC to
+  the server, with no MMIO and no hardware state.  Board demos use it
+  directly, and so do the `*_dm` adapters, which export the drivers to the
+  device manager as `/dev/…` paths.
+- **Bring-up happens in the root thread.**  The root thread calls every
+  `*_init()` and `board_services_init()`, which create the endpoints and spawn
+  the threads.  Portable apps in [`ulmk_apps`](https://github.com/uLipe/ulmk_apps)
+  never include board headers: they open device paths.
+
+The diagram source is `docs/diagrams/bsp_architecture.drawio`.
+
 | Vendor | Kit / board | SoC | Status |
 |--------|-------------|-----|--------|
 | Infineon | [AURIX TC275 Lite Kit](tc275_lite/) (`KIT_AURIX_TC275_LITE`) | TC275 (`SAK-TC275TP-64F200W`, TriCore, 3 cores) | Production reference — UP + SMP, full silicon cert suite |
